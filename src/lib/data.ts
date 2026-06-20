@@ -1,0 +1,66 @@
+/**
+ * UI-facing domain types (camelCase). These are what components consume; the
+ * persisted DB row types live in `@/lib/schema` and are mapped to these in the
+ * server actions. All amounts are integer MINOR UNITS of the row's `currency`.
+ */
+
+import type { AccountSubtype, BudgetPeriod, CategoryKind } from "@/lib/schema";
+
+export type Account = {
+  id: string;
+  name: string;
+  institution: string | null;
+  accountNumber: string | null; // decrypted for the owner; shown masked
+  type: "asset" | "liability";
+  subtype: AccountSubtype | null;
+  currency: string;
+  parentId: string | null;
+  isGroup: boolean;
+  openingBalance: number; // minor units
+};
+
+export type Category = {
+  id: string;
+  label: string;
+  kind: CategoryKind;
+  tint: string;
+};
+
+export type TransactionItem = {
+  id: string;
+  categoryId: string;
+  description: string;
+  amount: number; // minor units of the parent currency, signed
+};
+
+export type Transaction = {
+  id: string;
+  date: string; // ISO date
+  merchant: string;
+  categoryId: string;
+  accountId: string;
+  amount: number; // minor units of `currency`, signed (neg = out)
+  currency: string;
+  pending?: boolean;
+  /** Present when the transaction is split into multiple categorized items. */
+  items?: TransactionItem[];
+  /** Present when this expense was fronted for someone ("bought for a friend"). */
+  reimbursement?: {
+    person: string;
+    amount: number; // minor units owed back to you
+    note: string;
+    settled: boolean;
+    settledAt: string | null;
+  };
+  /** True for the inflow recorded when a reimbursement is refunded (not income). */
+  isReimbursement?: boolean;
+  /** For a repayment inflow: the id of the reimbursable transaction it settles. */
+  settlesId?: string;
+};
+
+export type Budget = {
+  id: string;
+  categoryId: string;
+  amount: number; // base-currency minor units
+  period: BudgetPeriod;
+};

@@ -83,6 +83,22 @@ export default function CategoriesPage() {
   );
 }
 
+/** Order a list as: each top-level category followed by its sub-categories. */
+function orderWithChildren(items: Category[]): { cat: Category; depth: number }[] {
+  const out: { cat: Category; depth: number }[] = [];
+  const seen = new Set<string>();
+  for (const p of items.filter((c) => !c.parentId)) {
+    out.push({ cat: p, depth: 0 });
+    seen.add(p.id);
+    for (const ch of items.filter((c) => c.parentId === p.id)) {
+      out.push({ cat: ch, depth: 1 });
+      seen.add(ch.id);
+    }
+  }
+  for (const c of items) if (!seen.has(c.id)) out.push({ cat: c, depth: 0 });
+  return out;
+}
+
 function CategoryGroup({
   title,
   items,
@@ -102,13 +118,26 @@ function CategoryGroup({
         <span>{items.length}</span>
       </p>
       <ul className="divide-y divide-border/50 px-2">
-        {items.map((c) => (
-          <li key={c.id} className="flex items-center gap-3 py-3 pl-1 pr-1">
+        {orderWithChildren(items).map(({ cat: c, depth }) => (
+          <li
+            key={c.id}
+            className="flex items-center gap-3 py-3 pr-1"
+            style={{ paddingLeft: 4 + depth * 22 }}
+          >
+            {depth > 0 && <span className="text-muted-foreground">↳</span>}
             <span
               className="size-3.5 shrink-0 rounded-full"
               style={{ backgroundColor: c.tint }}
             />
-            <span className="flex-1 truncate text-sm font-medium">{c.label}</span>
+            <span className="flex-1 truncate text-sm font-medium">
+              {c.label}
+              {depth === 0 &&
+                items.some((x) => x.parentId === c.id) && (
+                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                    group
+                  </span>
+                )}
+            </span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button

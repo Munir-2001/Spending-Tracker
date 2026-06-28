@@ -6,23 +6,28 @@ import { redirect } from "next/navigation";
 
 import * as db from "@/server/db";
 import { enc, dec, hashToken } from "@/server/crypto";
+import * as v from "@/server/validation";
 import { createClient } from "@/lib/supabase/server";
 import { SUPABASE_CONFIGURED } from "@/lib/supabase/config";
 import {
   DEMO_USER_ID,
   type AccountRow,
+  type AssetRow,
   type BudgetRow,
   type CategoryRow,
   type NewAccountInput,
+  type NewAssetInput,
   type NewCategoryInput,
   type NewTransactionInput,
   type RepaymentInput,
+  type TransferInput,
   type TransactionLineRow,
   type TransactionRow,
   type UserSettingsRow,
 } from "@/lib/schema";
 import type {
   Account,
+  Asset,
   Budget,
   Category,
   Transaction,
@@ -91,6 +96,7 @@ function categoryToUi(r: CategoryRow): Category {
     label: r.name,
     kind: r.kind,
     tint: r.color ?? "var(--muted-foreground)",
+    parentId: r.parent_id ?? null,
   };
 }
 
@@ -129,11 +135,12 @@ function transactionToUi(
           }
         : undefined,
     isReimbursement: r.is_reimbursement ?? false,
+    isTransfer: r.is_transfer ?? false,
     settlesId: r.settles_id ?? undefined,
   };
 }
 
-// Default reimbursement columns for new rows.
+// Default reimbursement/transfer columns for new rows.
 const noReimburse = {
   reimburse_person: null,
   reimburse_amount: 0,
@@ -141,6 +148,7 @@ const noReimburse = {
   reimburse_settled: false,
   reimburse_settled_at: null,
   is_reimbursement: false,
+  is_transfer: false,
   settles_id: null,
 } as const;
 
@@ -158,6 +166,75 @@ export async function listCategories(): Promise<Category[]> {
   return rows.map(categoryToUi);
 }
 
+// ── Assets ──────────────────────────────────────────────────────────────────
+function assetToUi(r: AssetRow): Asset {
+  return {
+    id: r.id,
+    name: dec(r.name) ?? "",
+    type: r.type,
+    value: r.value,
+    currency: r.currency,
+    note: dec(r.note),
+  };
+}
+
+function revalidateAssetViews() {
+  revalidatePath("/");
+  revalidatePath("/assets");
+  revalidatePath("/accounts");
+  revalidatePath("/reports");
+}
+
+export async function listAssets(): Promise<Asset[]> {
+  const rows = await db.selectAll("assets");
+  return rows.map(assetToUi);
+}
+
+export async function createAsset(raw: NewAssetInput): Promise<Asset> {
+  const input = v.assetInput.parse(raw) as NewAssetInput;
+  const userId = await getUserId();
+  const now = new Date().toISOString();
+  const row: AssetRow = {
+    id: randomUUID(),
+    user_id: userId,
+    org_id: null,
+    name: enc(input.name)!,
+    type: input.type,
+    value: input.value,
+    currency: input.currency,
+    note: enc(input.note),
+    created_at: now,
+    updated_at: now,
+  };
+  await db.insert("assets", row);
+  revalidateAssetViews();
+  return assetToUi(row);
+}
+
+export async function updateAsset(
+  id: string,
+  raw: NewAssetInput
+): Promise<Asset | null> {
+  const input = v.assetInput.parse(raw) as NewAssetInput;
+  v.idInput.parse(id);
+  const updated = await db.update("assets", id, {
+    name: enc(input.name)!,
+    type: input.type,
+    value: input.value,
+    currency: input.currency,
+    note: enc(input.note),
+    updated_at: new Date().toISOString(),
+  });
+  revalidateAssetViews();
+  return updated ? assetToUi(updated) : null;
+}
+
+export async function deleteAsset(id: string): Promise<void> {
+  v.idInput.parse(id);
+  await db.remove("assets", id);
+  revalidateAssetViews();
+}
+
 function revalidateCategoryViews() {
   revalidatePath("/");
   revalidatePath("/transactions");
@@ -167,7 +244,8 @@ function revalidateCategoryViews() {
   revalidatePath("/settings");
 }
 
-export async function createCategory(input: NewCategoryInput): Promise<Category> {
+export async function createCategory(raw: NewCategoryInput): Promise<Category> {
+  const input = v.categoryInput.parse(raw) as NewCategoryInput;
   const userId = await getUserId();
   const row: CategoryRow = {
     id: randomUUID(),
@@ -176,7 +254,7 @@ export async function createCategory(input: NewCategoryInput): Promise<Category>
     name: input.name,
     kind: input.kind,
     color: input.color,
-    parent_id: null,
+    parent_id: input.parentId,
     created_at: new Date().toISOString(),
   };
   await db.insert("categories", row);
@@ -186,12 +264,15 @@ export async function createCategory(input: NewCategoryInput): Promise<Category>
 
 export async function updateCategory(
   id: string,
-  input: NewCategoryInput
+  raw: NewCategoryInput
 ): Promise<Category | null> {
+  const input = v.categoryInput.parse(raw) as NewCategoryInput;
+  v.idInput.parse(id);
   const updated = await db.update("categories", id, {
     name: input.name,
     kind: input.kind,
     color: input.color,
+    parent_id: input.parentId,
   });
   revalidateCategoryViews();
   return updated ? categoryToUi(updated) : null;
@@ -203,6 +284,7 @@ export async function updateCategory(
  * budget for the category is removed.
  */
 export async function deleteCategory(id: string): Promise<void> {
+  v.idInput.parse(id);
   const txns = (
     await db.selectAll("transactions")
   ).filter((t) => t.category_id === id);
@@ -215,6 +297,10 @@ export async function deleteCategory(id: string): Promise<void> {
 
   const budgets = await db.selectWhere("budgets", { category_id: id });
   for (const b of budgets) await db.remove("budgets", b.id);
+
+  // Promote any sub-categories to top-level rather than orphaning them.
+  const children = await db.selectWhere("categories", { parent_id: id });
+  for (const c of children) await db.update("categories", c.id, { parent_id: null });
 
   await db.remove("categories", id);
   revalidateCategoryViews();
@@ -237,7 +323,8 @@ export async function listTransactions(): Promise<Transaction[]> {
 }
 
 // ── Writes ──────────────────────────────────────────────────────────────────
-export async function createAccount(input: NewAccountInput): Promise<Account> {
+export async function createAccount(raw: NewAccountInput): Promise<Account> {
+  const input = v.accountInput.parse(raw) as NewAccountInput;
   const userId = await getUserId();
   const now = new Date().toISOString();
   const row: AccountRow = {
@@ -268,8 +355,10 @@ export async function createAccount(input: NewAccountInput): Promise<Account> {
 
 export async function updateAccount(
   id: string,
-  input: NewAccountInput
+  raw: NewAccountInput
 ): Promise<Account | null> {
+  const input = v.accountInput.parse(raw) as NewAccountInput;
+  v.idInput.parse(id);
   const patch: Partial<AccountRow> = {
     parent_id: input.parentId,
     is_group: input.isGroup,
@@ -293,6 +382,7 @@ export async function updateAccount(
  * rather than deleted, so a group can be removed without losing its banks.
  */
 export async function deleteAccount(id: string): Promise<void> {
+  v.idInput.parse(id);
   const children = await db.selectWhere("accounts", { parent_id: id });
   for (const child of children) await db.update("accounts", child.id, { parent_id: null });
   await db.remove("accounts", id);
@@ -322,8 +412,9 @@ function buildLines(
 }
 
 export async function createTransaction(
-  input: NewTransactionInput
+  raw: NewTransactionInput
 ): Promise<Transaction> {
+  const input = v.transactionInput.parse(raw) as NewTransactionInput;
   const userId = await getUserId();
   const account = await db.findById("accounts", input.accountId);
   const currency = input.currency || account?.currency || "USD";
@@ -362,8 +453,10 @@ export async function createTransaction(
 
 export async function updateTransaction(
   id: string,
-  input: NewTransactionInput
+  raw: NewTransactionInput
 ): Promise<Transaction | null> {
+  const input = v.transactionInput.parse(raw) as NewTransactionInput;
+  v.idInput.parse(id);
   const account = await db.findById("accounts", input.accountId);
   const currency = input.currency || account?.currency || "USD";
   const now = new Date().toISOString();
@@ -398,6 +491,7 @@ export async function updateTransaction(
 export async function settleReimbursement(
   transactionId: string
 ): Promise<{ updated: Transaction | null; inflow: Transaction | null }> {
+  v.idInput.parse(transactionId);
   const userId = await getUserId();
   const txn = await db.findById("transactions", transactionId);
   if (!txn || !txn.reimburse_amount) return { updated: null, inflow: null };
@@ -442,8 +536,9 @@ export async function settleReimbursement(
  * reimbursable expense it settles. The inflow is flagged so it is NOT income.
  */
 export async function recordRepayment(
-  input: RepaymentInput
+  raw: RepaymentInput
 ): Promise<{ updated: Transaction | null; inflow: Transaction | null }> {
+  const input = v.repaymentInput.parse(raw) as RepaymentInput;
   const userId = await getUserId();
   const claim = await db.findById("transactions", input.claimId);
   const now = new Date().toISOString();
@@ -483,7 +578,129 @@ export async function recordRepayment(
   };
 }
 
+/**
+ * Move money from an account to another account or an asset. Both legs are
+ * flagged is_transfer so they're excluded from income/expense — only balances
+ * (and net worth) move. Account→asset bumps the asset's value.
+ */
+export async function recordTransfer(
+  raw: TransferInput
+): Promise<{ source: Transaction; dest: Transaction | null; asset: Asset | null }> {
+  const input = v.transferInput.parse(raw) as TransferInput;
+  const userId = await getUserId();
+  const now = new Date().toISOString();
+  const from = await db.findById("accounts", input.fromAccountId);
+  const fromCur = from?.currency ?? "USD";
+  const fromName = dec(from?.name) ?? "account";
+
+  const leg = (
+    accountId: string,
+    amount: number,
+    currency: string,
+    desc: string
+  ): TransactionRow => ({
+    id: randomUUID(),
+    user_id: userId,
+    org_id: null,
+    account_id: accountId,
+    category_id: null,
+    date: input.date,
+    description: enc(desc)!,
+    amount,
+    currency,
+    status: "posted",
+    source: "manual",
+    external_id: null,
+    notes: input.note ? enc(input.note) : null,
+    ...noReimburse,
+    is_transfer: true,
+    created_at: now,
+    updated_at: now,
+  });
+
+  let destLabel = "transfer";
+  let dest: Transaction | null = null;
+  let assetUi: Asset | null = null;
+
+  if (input.toKind === "account") {
+    const to = await db.findById("accounts", input.toId);
+    destLabel = dec(to?.name) ?? "account";
+    const destRow = leg(
+      input.toId,
+      Math.abs(input.toAmount),
+      to?.currency ?? fromCur,
+      `Transfer from ${fromName}`
+    );
+    await db.insert("transactions", destRow);
+    dest = transactionToUi(destRow);
+  } else {
+    const asset = await db.findById("assets", input.toId);
+    if (asset) {
+      destLabel = dec(asset.name) ?? "asset";
+      const updated = await db.update("assets", input.toId, {
+        value: asset.value + Math.abs(input.toAmount),
+        updated_at: now,
+      });
+      assetUi = updated ? assetToUi(updated) : null;
+    }
+  }
+
+  const sourceRow = leg(
+    input.fromAccountId,
+    -Math.abs(input.amount),
+    fromCur,
+    `Transfer to ${destLabel}`
+  );
+  await db.insert("transactions", sourceRow);
+
+  revalidateTxnViews();
+  revalidatePath("/assets");
+  return { source: transactionToUi(sourceRow), dest, asset: assetUi };
+}
+
+/**
+ * Reconcile an account to a real-world balance by posting a one-line balance
+ * adjustment (the delta). Flagged is_transfer so it's excluded from income/
+ * expense — it only moves the account's balance.
+ */
+export async function adjustBalance(
+  accountId: string,
+  delta: number
+): Promise<Transaction | null> {
+  v.idInput.parse(accountId);
+  if (!Number.isFinite(delta)) throw new Error("Invalid adjustment amount");
+  delta = Math.trunc(delta);
+  if (delta === 0) return null;
+  const userId = await getUserId();
+  const account = await db.findById("accounts", accountId);
+  const now = new Date().toISOString();
+  const row: TransactionRow = {
+    id: randomUUID(),
+    user_id: userId,
+    org_id: null,
+    account_id: accountId,
+    category_id: null,
+    date: now.slice(0, 10),
+    description: enc("Balance adjustment")!,
+    amount: delta,
+    currency: account?.currency ?? "USD",
+    status: "posted",
+    source: "manual",
+    external_id: null,
+    notes: null,
+    ...noReimburse,
+    is_transfer: true,
+    created_at: now,
+    updated_at: now,
+  };
+  await db.insert("transactions", row);
+  revalidateTxnViews();
+  revalidatePath("/accounts");
+  return transactionToUi(row);
+}
+
 export async function deleteTransaction(id: string): Promise<void> {
+  v.idInput.parse(id);
   const existing = await db.selectWhere("transaction_lines", { transaction_id: id });
   for (const l of existing) await db.remove("transaction_lines", l.id);
   await db.remove("transactions", id);
@@ -504,8 +721,11 @@ export type ImportRow = {
 export async function importTransactions(
   accountId: string,
   defaultCategoryId: string | null,
-  rows: ImportRow[]
+  rawRows: ImportRow[]
 ): Promise<{ created: Transaction[]; skipped: number }> {
+  v.idInput.parse(accountId);
+  if (defaultCategoryId) v.idInput.parse(defaultCategoryId);
+  const rows = v.importRows.parse(rawRows) as ImportRow[];
   const userId = await getUserId();
   const account = await db.findById("accounts", accountId);
   const currency = account?.currency ?? "USD";
@@ -599,7 +819,8 @@ export async function getSettings(): Promise<AppSettings> {
   return { baseCurrency, rates };
 }
 
-export async function updateSettings(s: AppSettings): Promise<AppSettings> {
+export async function updateSettings(raw: AppSettings): Promise<AppSettings> {
+  const s = v.settingsInput.parse(raw) as AppSettings;
   if (!SUPABASE_CONFIGURED) {
     await db.writeSettings(s);
     revalidatePath("/");
@@ -644,6 +865,9 @@ export async function setBudget(
   categoryId: string,
   amount: number
 ): Promise<Budget | null> {
+  v.idInput.parse(categoryId);
+  if (!Number.isFinite(amount)) throw new Error("Invalid budget amount");
+  amount = Math.trunc(amount);
   const userId = await getUserId();
   const existing = (
     await db.selectWhere("budgets", { category_id: categoryId })

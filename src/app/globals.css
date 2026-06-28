@@ -15,6 +15,9 @@
   --color-income-foreground: var(--income-foreground);
   --color-expense: var(--expense);
   --color-expense-foreground: var(--expense-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-destructive-foreground: var(--destructive-foreground);
   --color-surface: var(--surface);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -29,6 +32,16 @@
   --color-chart-3: var(--chart-3);
   --color-chart-2: var(--chart-2);
   --color-chart-1: var(--chart-1);
+  --color-cat-1: var(--cat-1);
+  --color-cat-2: var(--cat-2);
+  --color-cat-3: var(--cat-3);
+  --color-cat-4: var(--cat-4);
+  --color-cat-5: var(--cat-5);
+  --color-cat-6: var(--cat-6);
+  --color-cat-7: var(--cat-7);
+  --color-cat-8: var(--cat-8);
+  --color-cat-9: var(--cat-9);
+  --color-cat-10: var(--cat-10);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -72,11 +85,15 @@
   --accent: oklch(0.95 0.006 90);
   --accent-foreground: oklch(0.24 0.008 60);
   --destructive: oklch(0.55 0.16 25);
+  --destructive-foreground: oklch(0.985 0.002 95);
   /* Semantic finance colors */
   --income: oklch(0.56 0.11 162);
   --income-foreground: oklch(0.985 0.002 95);
   --expense: oklch(0.56 0.13 28);
   --expense-foreground: oklch(0.985 0.002 95);
+  /* Warning — warm amber, a real third semantic state (near-budget, pending, review). */
+  --warning: oklch(0.70 0.12 75);
+  --warning-foreground: oklch(0.985 0.002 95);
   --border: oklch(0.9 0.004 90);
   --input: oklch(0.9 0.004 90);
   --ring: oklch(0.56 0.11 162);
@@ -86,6 +103,17 @@
   --chart-3: oklch(0.72 0.05 110);
   --chart-4: oklch(0.6 0.04 60);
   --chart-5: oklch(0.42 0.02 60);
+  /* Category identity palette — lifted out of category-dialog so it adapts to dark. */
+  --cat-1: oklch(0.56 0.11 162);
+  --cat-2: oklch(0.55 0.11 250);
+  --cat-3: oklch(0.62 0.12 150);
+  --cat-4: oklch(0.66 0.14 50);
+  --cat-5: oklch(0.6 0.11 280);
+  --cat-6: oklch(0.6 0.13 330);
+  --cat-7: oklch(0.68 0.13 90);
+  --cat-8: oklch(0.64 0.1 200);
+  --cat-9: oklch(0.58 0.06 70);
+  --cat-10: oklch(0.6 0.16 20);
   --radius: 0.625rem;
   --sidebar: oklch(0.975 0.004 95);
   --sidebar-foreground: oklch(0.24 0.008 60);
@@ -115,10 +143,13 @@
   --accent: oklch(0.29 0.009 75);
   --accent-foreground: oklch(0.95 0.004 90);
   --destructive: oklch(0.62 0.16 25);
+  --destructive-foreground: oklch(0.985 0.002 95);
   --income: oklch(0.7 0.13 162);
   --income-foreground: oklch(0.18 0.01 162);
   --expense: oklch(0.66 0.15 28);
   --expense-foreground: oklch(0.18 0.01 28);
+  --warning: oklch(0.78 0.13 80);
+  --warning-foreground: oklch(0.18 0.01 75);
   --border: oklch(1 0 0 / 9%);
   --input: oklch(1 0 0 / 13%);
   --ring: oklch(0.7 0.13 162);
@@ -127,6 +158,17 @@
   --chart-3: oklch(0.74 0.06 110);
   --chart-4: oklch(0.6 0.04 60);
   --chart-5: oklch(0.8 0.02 90);
+  /* Category palette tuned lighter for the dark canvas. */
+  --cat-1: oklch(0.7 0.13 162);
+  --cat-2: oklch(0.68 0.12 250);
+  --cat-3: oklch(0.72 0.12 150);
+  --cat-4: oklch(0.74 0.14 50);
+  --cat-5: oklch(0.7 0.12 280);
+  --cat-6: oklch(0.7 0.13 330);
+  --cat-7: oklch(0.78 0.13 90);
+  --cat-8: oklch(0.74 0.1 200);
+  --cat-9: oklch(0.7 0.06 70);
+  --cat-10: oklch(0.7 0.16 20);
   --sidebar: oklch(0.195 0.007 75);
   --sidebar-foreground: oklch(0.9 0.004 90);
   --sidebar-primary: oklch(0.92 0.004 90);
@@ -163,6 +205,31 @@
     font-variant-numeric: lining-nums tabular-nums;
     letter-spacing: -0.02em;
   }
+  /* The uppercase micro-label used for section eyebrows and tile labels.
+     Replaces hand-rolled text-[10px]/[11px] uppercase tracking-[0.12em]. */
+  .eyebrow {
+    font-size: 0.6875rem; /* 11px */
+    line-height: 1rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted-foreground);
+  }
+}
+
+/* Semantic-subtle status chips — one ramp so income/expense/warning chips
+   are built identically (fill at 12% of the semantic color, solid text). */
+@utility chip-income {
+  background-color: color-mix(in oklch, var(--income) 12%, transparent);
+  color: var(--income);
+}
+@utility chip-expense {
+  background-color: color-mix(in oklch, var(--expense) 12%, transparent);
+  color: var(--expense);
+}
+@utility chip-warning {
+  background-color: color-mix(in oklch, var(--warning) 16%, transparent);
+  color: var(--warning);
 }
 
 @utility tabular {

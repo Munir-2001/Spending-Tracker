@@ -9,26 +9,33 @@ import {
 } from "react";
 import { toast } from "sonner";
 
-import type { Account, Budget, Category, Transaction } from "@/lib/data";
+import type { Account, Asset, Budget, Category, Transaction } from "@/lib/data";
 import type {
   NewAccountInput,
+  NewAssetInput,
   NewCategoryInput,
   NewTransactionInput,
   RepaymentInput,
+  TransferInput,
 } from "@/lib/schema";
 import { makeFx, type Fx } from "@/lib/currency";
 import {
   createAccount,
+  createAsset as createAssetAction,
   createCategory as createCategoryAction,
   createTransaction,
   deleteAccount as deleteAccountAction,
+  deleteAsset as deleteAssetAction,
   deleteCategory as deleteCategoryAction,
+  adjustBalance as adjustBalanceAction,
   deleteTransaction as deleteTransactionAction,
   importTransactions as importTransactionsAction,
   recordRepayment as recordRepaymentAction,
+  recordTransfer as recordTransferAction,
   settleReimbursement as settleReimbursementAction,
   setBudget as setBudgetAction,
   updateAccount,
+  updateAsset as updateAssetAction,
   updateCategory as updateCategoryAction,
   updateSettings as updateSettingsAction,
   updateTransaction,
@@ -36,9 +43,12 @@ import {
   type ImportRow,
 } from "@/server/actions";
 import { AddTransactionDialog } from "@/components/transactions/add-transaction-dialog";
+import { TransactionDetailDialog } from "@/components/transactions/transaction-detail-dialog";
 import { AddAccountDialog } from "@/components/accounts/add-account-dialog";
+import { AdjustBalanceDialog } from "@/components/accounts/adjust-balance-dialog";
 import { ImportDialog } from "@/components/transactions/import-dialog";
 import { CategoryDialog } from "@/components/categories/category-dialog";
+import { AssetDialog } from "@/components/assets/asset-dialog";
 
 export type NewTransaction = NewTransactionInput;
 export type NewAccount = NewAccountInput;
@@ -51,11 +61,24 @@ type Ctx = {
   deleteTransaction: (id: string) => void;
   settleReimbursement: (id: string) => void;
   recordRepayment: (input: RepaymentInput) => void;
+  recordTransfer: (input: TransferInput) => void;
+  /** Reconcile an account to a real balance (target in account's minor units). */
+  adjustBalance: (accountId: string, targetMinor: number) => void;
+  isAdjustOpen: boolean;
+  adjustAccount: Account | null;
+  openAdjustBalance: (account: Account) => void;
+  setAdjustOpen: (open: boolean) => void;
   isAddOpen: boolean;
   editingTransaction: Transaction | null;
   openAdd: () => void;
   openEditTransaction: (t: Transaction) => void;
   setAddOpen: (open: boolean) => void;
+
+  // Transaction detail view
+  isDetailOpen: boolean;
+  detailTransaction: Transaction | null;
+  openTransactionDetail: (t: Transaction) => void;
+  setDetailOpen: (open: boolean) => void;
 
   // Import
   isImportOpen: boolean;
@@ -94,6 +117,17 @@ type Ctx = {
   openEditCategory: (c: Category) => void;
   setCategoryOpen: (open: boolean) => void;
 
+  // Assets
+  assets: Asset[];
+  addAsset: (input: NewAssetInput) => void;
+  saveAsset: (id: string, input: NewAssetInput) => void;
+  deleteAsset: (id: string) => void;
+  isAssetOpen: boolean;
+  editingAsset: Asset | null;
+  openAddAsset: () => void;
+  openEditAsset: (a: Asset) => void;
+  setAssetOpen: (open: boolean) => void;
+
   // Lookups
   getAccount: (id: string) => Account | undefined;
   getCategory: (id: string) => Category | undefined;
@@ -117,6 +151,7 @@ export function TransactionsProvider({
   initialAccounts,
   initialCategories,
   initialBudgets,
+  initialAssets,
   initialSettings,
   children,
 }: {
@@ -124,6 +159,7 @@ export function TransactionsProvider({
   initialAccounts: Account[];
   initialCategories: Category[];
   initialBudgets: Budget[];
+  initialAssets: Asset[];
   initialSettings: AppSettings;
   children: React.ReactNode;
 }) {
@@ -133,6 +169,9 @@ export function TransactionsProvider({
   const [accounts, setAccounts] = useState<Account[]>(initialAccounts);
   const [categories, setCategories] = useState<Category[]>(initialCategories);
   const [budgets, setBudgets] = useState<Budget[]>(initialBudgets);
+  const [assets, setAssets] = useState<Asset[]>(initialAssets);
+  const [isAssetOpen, setAssetOpenState] = useState(false);
+  const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [isCategoryOpen, setCategoryOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [baseCurrency, setBaseCurrency] = useState(initialSettings.baseCurrency);
@@ -148,6 +187,9 @@ export function TransactionsProvider({
   }, []);
   const [isAddOpen, setAddOpenState] = useState(false);
   const [editingTransaction, setEditingTransaction] =
+    useState<Transaction | null>(null);
+  const [isDetailOpen, setDetailOpenState] = useState(false);
+  const [detailTransaction, setDetailTransaction] =
     useState<Transaction | null>(null);
   const [isImportOpen, setImportOpen] = useState(false);
   const [isAddAccountOpen, setAddAccountOpenState] = useState(false);
@@ -211,6 +253,21 @@ export function TransactionsProvider({
       .catch(() => toast.error("Couldn't record the repayment. Please try again."));
   }, []);
 
+  const recordTransfer = useCallback((input: TransferInput) => {
+    recordTransferAction(input)
+      .then(({ source, dest, asset }) => {
+        setItems((prev) => {
+          const add = [source, ...(dest ? [dest] : [])];
+          return [...add, ...prev].sort(byDateDesc);
+        });
+        if (asset) setAssets((prev) => prev.map((a) => (a.id === asset.id ? asset : a)));
+        toast.success("Transfer recorded", {
+          description: "Moved between holdings — not counted as spending.",
+        });
+      })
+      .catch(() => toast.error("Couldn't record the transfer. Please try again."));
+  }, []);
+
   const importTransactions = useCallback(
     async (accountId: string, categoryId: string | null, rows: ImportRow[]) => {
       const res = await importTransactionsAction(accountId, categoryId, rows);
@@ -230,6 +287,31 @@ export function TransactionsProvider({
         })
       )
       .catch(() => toast.error("Couldn't save budget. Please try again."));
+  }, []);
+
+  const addAsset = useCallback((input: NewAssetInput) => {
+    createAssetAction(input)
+      .then((saved) => setAssets((prev) => [...prev, saved]))
+      .catch(() => toast.error("Couldn't add asset. Please try again."));
+  }, []);
+
+  const saveAsset = useCallback((id: string, input: NewAssetInput) => {
+    updateAssetAction(id, input)
+      .then((saved) => {
+        if (saved) setAssets((prev) => prev.map((a) => (a.id === id ? saved : a)));
+      })
+      .catch(() => toast.error("Couldn't update asset. Please try again."));
+  }, []);
+
+  const deleteAsset = useCallback((id: string) => {
+    deleteAssetAction(id)
+      .then(() => setAssets((prev) => prev.filter((a) => a.id !== id)))
+      .catch(() => toast.error("Couldn't delete asset. Please try again."));
+  }, []);
+
+  const setAssetOpen = useCallback((open: boolean) => {
+    setAssetOpenState(open);
+    if (!open) setEditingAsset(null);
   }, []);
 
   const addCategory = useCallback((input: NewCategoryInput) => {
@@ -321,6 +403,31 @@ export function TransactionsProvider({
     return map;
   }, [accounts, items, fx]);
 
+  const [isAdjustOpen, setAdjustOpenState] = useState(false);
+  const [adjustAccount, setAdjustAccount] = useState<Account | null>(null);
+  const setAdjustOpen = useCallback((open: boolean) => {
+    setAdjustOpenState(open);
+    if (!open) setAdjustAccount(null);
+  }, []);
+
+  const adjustBalance = useCallback(
+    (accountId: string, targetMinor: number) => {
+      const current = ownBalance.get(accountId) ?? 0;
+      const delta = targetMinor - current;
+      if (delta === 0) {
+        toast("Balance already matches — no adjustment needed.");
+        return;
+      }
+      adjustBalanceAction(accountId, delta)
+        .then((saved) => {
+          if (saved) setItems((prev) => [saved, ...prev].sort(byDateDesc));
+          toast.success("Balance reconciled");
+        })
+        .catch(() => toast.error("Couldn't adjust the balance. Please try again."));
+    },
+    [ownBalance]
+  );
+
   const budgetByCategory = useMemo(
     () => new Map(budgets.map((b) => [b.categoryId, b.amount])),
     [budgets]
@@ -334,6 +441,15 @@ export function TransactionsProvider({
       deleteTransaction,
       settleReimbursement,
       recordRepayment,
+      recordTransfer,
+      adjustBalance,
+      isAdjustOpen,
+      adjustAccount,
+      openAdjustBalance: (account: Account) => {
+        setAdjustAccount(account);
+        setAdjustOpenState(true);
+      },
+      setAdjustOpen,
       isAddOpen,
       editingTransaction,
       openAdd: () => {
@@ -345,6 +461,13 @@ export function TransactionsProvider({
         setAddOpenState(true);
       },
       setAddOpen,
+      isDetailOpen,
+      detailTransaction,
+      openTransactionDetail: (t: Transaction) => {
+        setDetailTransaction(t);
+        setDetailOpenState(true);
+      },
+      setDetailOpen: setDetailOpenState,
       isImportOpen,
       openImport: () => setImportOpen(true),
       setImportOpen,
@@ -385,6 +508,21 @@ export function TransactionsProvider({
         setCategoryOpen(open);
         if (!open) setEditingCategory(null);
       },
+      assets,
+      addAsset,
+      saveAsset,
+      deleteAsset,
+      isAssetOpen,
+      editingAsset,
+      openAddAsset: () => {
+        setEditingAsset(null);
+        setAssetOpenState(true);
+      },
+      openEditAsset: (a: Asset) => {
+        setEditingAsset(a);
+        setAssetOpenState(true);
+      },
+      setAssetOpen,
       getAccount: (id) => accountsById.get(id),
       getCategory: (id) => categoriesById.get(id),
       balanceOf: (id) => ownBalance.get(id) ?? 0,
@@ -400,9 +538,16 @@ export function TransactionsProvider({
       deleteTransaction,
       settleReimbursement,
       recordRepayment,
+      recordTransfer,
+      adjustBalance,
+      isAdjustOpen,
+      adjustAccount,
+      setAdjustOpen,
       isAddOpen,
       editingTransaction,
       setAddOpen,
+      isDetailOpen,
+      detailTransaction,
       isImportOpen,
       importTransactions,
       budgets,
@@ -421,6 +566,13 @@ export function TransactionsProvider({
       deleteCategory,
       isCategoryOpen,
       editingCategory,
+      assets,
+      addAsset,
+      saveAsset,
+      deleteAsset,
+      isAssetOpen,
+      editingAsset,
+      setAssetOpen,
       accountsById,
       categoriesById,
       ownBalance,
@@ -441,14 +593,28 @@ export function TransactionsProvider({
         onSave={saveTransaction}
         onDelete={deleteTransaction}
         onRepayment={recordRepayment}
+        onTransfer={recordTransfer}
         openClaims={items.filter((t) => t.reimbursement && !t.reimbursement.settled)}
         editing={editingTransaction}
         accounts={accounts}
+        assets={assets}
         categories={categories}
+        fx={fx}
         onAddAccount={() => {
           setAddOpen(false);
           setAddAccountOpen(true);
         }}
+        onAddAsset={() => {
+          // Open the asset dialog on top — keep the transfer form open so the
+          // new asset can be picked as the destination once created.
+          setEditingAsset(null);
+          setAssetOpenState(true);
+        }}
+      />
+      <TransactionDetailDialog
+        open={isDetailOpen}
+        onOpenChange={setDetailOpenState}
+        transaction={detailTransaction}
       />
       <AddAccountDialog
         open={isAddAccountOpen}
@@ -476,6 +642,19 @@ export function TransactionsProvider({
         onSave={saveCategory}
         onDelete={deleteCategory}
         editing={editingCategory}
+      />
+      <AssetDialog
+        open={isAssetOpen}
+        onOpenChange={setAssetOpen}
+        onCreate={addAsset}
+        onSave={saveAsset}
+        onDelete={deleteAsset}
+        editing={editingAsset}
+      />
+      <AdjustBalanceDialog
+        open={isAdjustOpen}
+        onOpenChange={setAdjustOpen}
+        account={adjustAccount}
       />
     </AppDataContext.Provider>
   );

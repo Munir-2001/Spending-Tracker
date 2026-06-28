@@ -9,6 +9,7 @@ import {
   getCurrentUser,
   getSettings,
   listAccounts,
+  listAssets,
   listBudgets,
   listCategories,
   listTransactions,
@@ -24,21 +25,40 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [
-    initialTransactions,
-    initialAccounts,
-    initialCategories,
-    initialBudgets,
-    initialSettings,
-    user,
-  ] = await Promise.all([
-    listTransactions(),
-    listAccounts(),
-    listCategories(),
-    listBudgets(),
-    getSettings(),
-    getCurrentUser(),
-  ]);
+  // Resilient load: a transient backend error shouldn't 500 the whole app.
+  // Fall back to empty data so the shell still renders; the user can retry.
+  let initialTransactions: Awaited<ReturnType<typeof listTransactions>> = [];
+  let initialAccounts: Awaited<ReturnType<typeof listAccounts>> = [];
+  let initialCategories: Awaited<ReturnType<typeof listCategories>> = [];
+  let initialBudgets: Awaited<ReturnType<typeof listBudgets>> = [];
+  let initialAssets: Awaited<ReturnType<typeof listAssets>> = [];
+  let initialSettings: Awaited<ReturnType<typeof getSettings>> = {
+    baseCurrency: "USD",
+    rates: {},
+  };
+  let user: Awaited<ReturnType<typeof getCurrentUser>> = null;
+
+  try {
+    [
+      initialTransactions,
+      initialAccounts,
+      initialCategories,
+      initialBudgets,
+      initialAssets,
+      initialSettings,
+      user,
+    ] = await Promise.all([
+      listTransactions(),
+      listAccounts(),
+      listCategories(),
+      listBudgets(),
+      listAssets(),
+      getSettings(),
+      getCurrentUser(),
+    ]);
+  } catch (err) {
+    console.error("[AppLayout] failed to load initial data:", err);
+  }
 
   return (
     <SidebarProvider>
@@ -47,6 +67,7 @@ export default async function AppLayout({
         initialAccounts={initialAccounts}
         initialCategories={initialCategories}
         initialBudgets={initialBudgets}
+        initialAssets={initialAssets}
         initialSettings={initialSettings}
       >
         <AppSidebar user={user} />

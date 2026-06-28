@@ -284,7 +284,7 @@ export function AddAccountDialog({
 
                 <div className="space-y-1.5">
                   <Label htmlFor="acc-bal">
-                    {type === "liability" ? "Amount owed" : "Current balance"}
+                    {type === "liability" ? "Amount owed" : "Starting balance"}
                   </Label>
                   <div className="relative">
                     <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
@@ -302,6 +302,10 @@ export function AddAccountDialog({
                       className="num pl-7"
                     />
                   </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Balance before any transactions you log. Use “Reconcile
+                    balance” later to match it to reality.
+                  </p>
                 </div>
 
                 <div className="space-y-1.5">

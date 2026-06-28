@@ -13,6 +13,7 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
+  Scale,
 } from "lucide-react";
 
 import type { Account } from "@/lib/data";
@@ -27,7 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useAppData } from "@/components/transactions/transactions-provider";
 import { formatMoney } from "@/lib/format";
-import { pendingReceivablesBase } from "@/lib/compute";
+import { assetsBase, pendingReceivablesBase } from "@/lib/compute";
 import { cn } from "@/lib/utils";
 
 const icons: Record<string, typeof Landmark> = {
@@ -43,10 +44,12 @@ export default function AccountsPage() {
   const {
     accounts,
     items,
+    assets,
     balanceOf,
     openAddAccount,
     openEditAccount,
     deleteAccount,
+    openAdjustBalance,
     baseCurrency,
     fx,
   } = useAppData();
@@ -74,7 +77,8 @@ export default function AccountsPage() {
   const receivables = pendingReceivablesBase(items, fx);
   const baseTotal =
     perCurrency.reduce((sum, [cur, amt]) => sum + fx.toBase(amt, cur), 0) +
-    receivables;
+    receivables +
+    assetsBase(assets, fx);
 
   // Roll up a group's leaf descendants into per-currency subtotals.
   function groupSubtotals(groupId: string): [string, number][] {
@@ -187,6 +191,7 @@ export default function AccountsPage() {
                           balance={balanceOf(c.id)}
                           onEdit={() => openEditAccount(c)}
                           onDelete={() => deleteAccount(c.id)}
+                          onAdjust={() => openAdjustBalance(c)}
                         />
                       ))}
                       {(childrenOf.get(node.id) ?? []).length === 0 && (
@@ -207,6 +212,7 @@ export default function AccountsPage() {
                       balance={balanceOf(node.id)}
                       onEdit={() => openEditAccount(node)}
                       onDelete={() => deleteAccount(node.id)}
+                      onAdjust={() => openAdjustBalance(node)}
                     />
                   </div>
                 )
@@ -224,11 +230,13 @@ function AccountRow({
   balance,
   onEdit,
   onDelete,
+  onAdjust,
 }: {
   account: Account;
   balance: number;
   onEdit: () => void;
   onDelete: () => void;
+  onAdjust: () => void;
 }) {
   const Icon = iconFor(account.subtype);
   const owed = balance < 0;
@@ -256,7 +264,7 @@ function AccountRow({
       >
         {formatMoney(balance, { currency: account.currency })}
       </p>
-      <RowMenu onEdit={onEdit} onDelete={onDelete} />
+      <RowMenu onEdit={onEdit} onDelete={onDelete} onAdjust={onAdjust} />
     </div>
   );
 }
@@ -264,9 +272,11 @@ function AccountRow({
 function RowMenu({
   onEdit,
   onDelete,
+  onAdjust,
 }: {
   onEdit: () => void;
   onDelete: () => void;
+  onAdjust?: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -281,6 +291,12 @@ function RowMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {onAdjust && (
+          <DropdownMenuItem onClick={onAdjust}>
+            <Scale className="size-4" />
+            Reconcile balance
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onClick={onEdit}>
           <Pencil className="size-4" />
           Edit

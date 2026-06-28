@@ -5,14 +5,21 @@ import { useMemo, useState } from "react";
 import { Reveal } from "@/components/reveal";
 import { CashflowChart } from "@/components/dashboard/cashflow-chart";
 import { useAppData } from "@/components/transactions/transactions-provider";
-import { categoryLinesOf, netWorthBase, pendingReceivablesBase } from "@/lib/compute";
+import {
+  assetsBase,
+  categoryLinesOf,
+  netWorthBase,
+  pendingReceivablesBase,
+  rollupCategoryId,
+} from "@/lib/compute";
 import { formatMoney, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Period = "month" | "year";
 
 export default function ReportsPage() {
-  const { items, accounts, categories, balanceOf, baseCurrency, fx } = useAppData();
+  const { items, accounts, categories, assets, balanceOf, baseCurrency, fx } =
+    useAppData();
   const [period, setPeriod] = useState<Period>("month");
   const now = new Date();
   const periodLabel =
@@ -34,12 +41,18 @@ export default function ReportsPage() {
     let income = 0;
     const expenseByCat = new Map<string, number>();
     for (const t of items) {
-      if (!inPeriod(t.date)) continue;
+      if (!inPeriod(t.date) || t.isReimbursement || t.isTransfer) continue;
       if (t.amount > 0) income += fx.toBase(t.amount, t.currency);
+      const split = Boolean(t.items?.length);
       for (const line of categoryLinesOf(t)) {
-        if (line.amount >= 0) continue;
-        const base = Math.abs(fx.toBase(line.amount, t.currency));
-        expenseByCat.set(line.categoryId, (expenseByCat.get(line.categoryId) ?? 0) + base);
+        const amt =
+          t.reimbursement && !split ? line.amount + t.reimbursement.amount : line.amount;
+        if (amt >= 0) continue;
+        const rollId = rollupCategoryId(line.categoryId, catById);
+        expenseByCat.set(
+          rollId,
+          (expenseByCat.get(rollId) ?? 0) + Math.abs(fx.toBase(amt, t.currency))
+        );
       }
     }
     const expenses = [...expenseByCat.entries()]
@@ -51,7 +64,9 @@ export default function ReportsPage() {
   }, [items, categories, inPeriod, fx]);
 
   const netWorth =
-    netWorthBase(accounts, balanceOf, fx) + pendingReceivablesBase(items, fx);
+    netWorthBase(accounts, balanceOf, fx) +
+    pendingReceivablesBase(items, fx) +
+    assetsBase(assets, fx);
   const savingsRate = statement.income > 0 ? statement.net / statement.income : 0;
   const money = { currency: baseCurrency } as const;
 

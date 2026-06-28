@@ -28,7 +28,10 @@ export default function BudgetsPage() {
     return map;
   }, [items, categories, now, fx]);
 
-  const expenseCategories = categories.filter((c) => c.kind === "expense");
+  // Budgets are set on top-level categories; sub-category spend rolls up.
+  const expenseCategories = categories.filter(
+    (c) => c.kind === "expense" && !c.parentId
+  );
   const totalBudget = expenseCategories.reduce((s, c) => s + budgetFor(c.id), 0);
   const totalSpent = expenseCategories.reduce(
     (s, c) => s + (spendByCat.get(c.id) ?? 0),

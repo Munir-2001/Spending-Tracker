@@ -22,14 +22,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type { Account, Category, Transaction } from "@/lib/data";
-import type { RepaymentInput } from "@/lib/schema";
-import { CURRENCIES, currencyInfo, toMajorUnits, toMinorUnits } from "@/lib/currency";
+import type { Account, Asset, Category, Transaction } from "@/lib/data";
+import type { RepaymentInput, TransferInput } from "@/lib/schema";
+import {
+  CURRENCIES,
+  currencyInfo,
+  toMajorUnits,
+  toMinorUnits,
+  type Fx,
+} from "@/lib/currency";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { NewTransaction } from "@/components/transactions/transactions-provider";
 
-type Kind = "expense" | "income";
+type Kind = "expense" | "income" | "transfer";
 type ItemRow = { key: string; description: string; categoryId: string; amount: string };
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -43,11 +49,15 @@ export function AddTransactionDialog({
   onSave,
   onDelete,
   onRepayment,
+  onTransfer,
   openClaims,
   editing,
   accounts,
+  assets,
   categories,
+  fx,
   onAddAccount,
+  onAddAsset,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -55,11 +65,15 @@ export function AddTransactionDialog({
   onSave: (id: string, t: NewTransaction) => void;
   onDelete: (id: string) => void;
   onRepayment: (input: RepaymentInput) => void;
+  onTransfer: (input: TransferInput) => void;
   openClaims: Transaction[];
   editing: Transaction | null;
   accounts: Account[];
+  assets: Asset[];
   categories: Category[];
+  fx: Fx;
   onAddAccount: () => void;
+  onAddAsset: () => void;
 }) {
   const isEditing = Boolean(editing);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -71,6 +85,23 @@ export function AddTransactionDialog({
   const expenseCategories = useMemo(
     () => categories.filter((c) => c.kind === "expense"),
     [categories]
+  );
+  // Parents first, each followed by its sub-categories (depth 1), for the picker.
+  const orderedExpenseCats = useMemo(() => {
+    const out: { cat: Category; depth: number }[] = [];
+    const seen = new Set<string>();
+    for (const p of expenseCategories.filter((c) => !c.parentId)) {
+      out.push({ cat: p, depth: 0 });
+      seen.add(p.id);
+      for (const ch of expenseCategories.filter((c) => c.parentId === p.id)) {
+        out.push({ cat: ch, depth: 1 });
+        seen.add(ch.id);
+      }
+    }
+    for (const c of expenseCategories)
+      if (!seen.has(c.id)) out.push({ cat: c, depth: 0 });
+    return out;
+  }, [expenseCategories]
   );
   const incomeCategory = useMemo(
     () => categories.find((c) => c.kind === "income"),
@@ -92,6 +123,8 @@ export function AddTransactionDialog({
   const [reimbNote, setReimbNote] = useState("");
   const [repayOn, setRepayOn] = useState(false);
   const [repayClaimId, setRepayClaimId] = useState("");
+  // Transfer destination, encoded as "acc:<id>" or "ast:<id>".
+  const [toTarget, setToTarget] = useState("");
 
   const blankItem = (): ItemRow => ({
     key: keyGen(),
@@ -140,6 +173,7 @@ export function AddTransactionDialog({
       }
       setRepayOn(false);
       setRepayClaimId("");
+      setToTarget("");
     } else {
       setItemized(false);
       setItemRows([]);
@@ -149,6 +183,7 @@ export function AddTransactionDialog({
       setReimbNote("");
       setRepayOn(false);
       setRepayClaimId("");
+      setToTarget("");
       const defAcc = accountsById.get(accountId) ?? selectable[0];
       setAccountId((prev) => prev || selectable[0]?.id || "");
       setCurrency(defAcc?.currency ?? "USD");
@@ -157,9 +192,24 @@ export function AddTransactionDialog({
   }, [open, editing, selectable, expenseCategories, accountsById, accountId]);
 
   const symbol = currencyInfo(currency).symbol;
+  const transferMode = kind === "transfer" && !isEditing;
   const useItems = itemized && kind === "expense";
   const useReimb = reimbOn && kind === "expense" && !useItems;
   const useRepay = repayOn && kind === "income" && !isEditing;
+  // Possible transfer destinations: other accounts + assets.
+  const toOptions = useMemo(
+    () => [
+      ...selectable
+        .filter((a) => a.id !== accountId)
+        .map((a) => ({ value: `acc:${a.id}`, label: a.name, sub: a.currency })),
+      ...assets.map((a) => ({
+        value: `ast:${a.id}`,
+        label: a.name,
+        sub: `asset · ${a.currency}`,
+      })),
+    ],
+    [selectable, assets, accountId]
+  );
   const itemsTotal = itemRows.reduce(
     (s, r) => s + (Number.parseFloat(r.amount) || 0),
     0
@@ -181,10 +231,40 @@ export function AddTransactionDialog({
     setReimbNote("");
     setRepayOn(false);
     setRepayClaimId("");
+    setToTarget("");
   }
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    // Transfer: move money between an account and another account/asset.
+    if (transferMode) {
+      if (!accountId) return toast.error("Choose the account to transfer from.");
+      if (!toTarget) return toast.error("Choose where to transfer to.");
+      const major = Number.parseFloat(amount);
+      if (!Number.isFinite(major) || major <= 0)
+        return toast.error("Enter an amount greater than zero.");
+      const [k, id] = toTarget.split(":");
+      const toKind = k === "ast" ? "asset" : "account";
+      const destCurrency =
+        toKind === "asset"
+          ? assets.find((a) => a.id === id)?.currency ?? currency
+          : accountsById.get(id)?.currency ?? currency;
+      const amountMinor = toMinorUnits(major, currency);
+      const toAmount = fx.convert(amountMinor, currency, destCurrency);
+      onTransfer({
+        fromAccountId: accountId,
+        toKind,
+        toId: id,
+        amount: amountMinor,
+        toAmount,
+        date,
+        note: merchant.trim(),
+      });
+      reset();
+      onOpenChange(false);
+      return;
+    }
 
     // Repayment: settles a chosen reimbursable expense, not income.
     if (useRepay) {
@@ -330,22 +410,35 @@ export function AddTransactionDialog({
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-1 rounded-lg border border-border/60 bg-muted/40 p-1">
-              {(["expense", "income"] as const).map((k) => (
+            <div
+              className={cn(
+                "grid gap-1 rounded-lg border border-border/60 bg-muted/40 p-1",
+                isEditing ? "grid-cols-2" : "grid-cols-3"
+              )}
+            >
+              {(isEditing
+                ? (["expense", "income"] as const)
+                : (["expense", "income", "transfer"] as const)
+              ).map((k) => (
                 <button
                   key={k}
                   type="button"
                   onClick={() => {
                     setKind(k);
-                    if (k === "income") setItemized(false);
-                    if (k === "expense") setRepayOn(false);
+                    if (k !== "expense") {
+                      setItemized(false);
+                      setReimbOn(false);
+                    }
+                    if (k !== "income") setRepayOn(false);
                   }}
                   className={cn(
                     "rounded-md py-1.5 text-sm font-medium capitalize transition-colors",
                     kind === k
                       ? k === "expense"
                         ? "bg-expense/10 text-expense"
-                        : "bg-income/10 text-income"
+                        : k === "income"
+                          ? "bg-income/10 text-income"
+                          : "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
                   )}
                 >
@@ -353,6 +446,45 @@ export function AddTransactionDialog({
                 </button>
               ))}
             </div>
+
+            {/* Transfer destination (transfer mode only) */}
+            {transferMode && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <Label>Transfer to</Label>
+                  <button
+                    type="button"
+                    onClick={onAddAsset}
+                    className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
+                  >
+                    <Plus className="size-3.5" />
+                    New asset
+                  </button>
+                </div>
+                {toOptions.length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-border px-3 py-3 text-xs text-muted-foreground">
+                    Add an account or asset to transfer into — tap “New asset”.
+                  </p>
+                ) : (
+                  <Select value={toTarget} onValueChange={setToTarget}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Choose destination" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {toOptions.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          {o.label}{" "}
+                          <span className="text-muted-foreground">· {o.sub}</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+                <p className="text-[11px] text-muted-foreground">
+                  Moves money between holdings — not counted as income or spending.
+                </p>
+              </div>
+            )}
 
             {/* Repayment option (income only) — settle a reimbursable expense */}
             {kind === "income" && !isEditing && (
@@ -439,13 +571,15 @@ export function AddTransactionDialog({
 
             {!useRepay && (
               <div className="space-y-1.5">
-                <Label htmlFor="merchant">Merchant / description</Label>
+                <Label htmlFor="merchant">
+                  {transferMode ? "Note (optional)" : "Merchant / description"}
+                </Label>
                 <Input
                   id="merchant"
                   value={merchant}
                   onChange={(e) => setMerchant(e.target.value)}
-                  placeholder="Carrefour"
-                  autoFocus
+                  placeholder={transferMode ? "Bought crypto" : "Carrefour"}
+                  autoFocus={!transferMode}
                 />
               </div>
             )}
@@ -453,7 +587,7 @@ export function AddTransactionDialog({
             {/* Account that paid + the currency it was charged in */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Account paid from</Label>
+                <Label>{transferMode ? "From account" : "Account paid from"}</Label>
                 <Select
                   value={accountId}
                   onValueChange={(v) => {
@@ -652,14 +786,20 @@ export function AddTransactionDialog({
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {expenseCategories.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>
-                              <span className="flex items-center gap-2">
+                          {orderedExpenseCats.map(({ cat, depth }) => (
+                            <SelectItem key={cat.id} value={cat.id}>
+                              <span
+                                className="flex items-center gap-2"
+                                style={{ paddingLeft: depth * 14 }}
+                              >
                                 <span
                                   className="size-2 rounded-full"
-                                  style={{ backgroundColor: c.tint }}
+                                  style={{ backgroundColor: cat.tint }}
                                 />
-                                {c.label}
+                                {depth > 0 && (
+                                  <span className="text-muted-foreground">↳</span>
+                                )}
+                                {cat.label}
                               </span>
                             </SelectItem>
                           ))}
@@ -698,14 +838,20 @@ export function AddTransactionDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {expenseCategories.map((c) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          <span className="flex items-center gap-2">
+                      {orderedExpenseCats.map(({ cat, depth }) => (
+                        <SelectItem key={cat.id} value={cat.id}>
+                          <span
+                            className="flex items-center gap-2"
+                            style={{ paddingLeft: depth * 14 }}
+                          >
                             <span
                               className="size-2 rounded-full"
-                              style={{ backgroundColor: c.tint }}
+                              style={{ backgroundColor: cat.tint }}
                             />
-                            {c.label}
+                            {depth > 0 && (
+                              <span className="text-muted-foreground">↳</span>
+                            )}
+                            {cat.label}
                           </span>
                         </SelectItem>
                       ))}
@@ -826,7 +972,11 @@ export function AddTransactionDialog({
                   Cancel
                 </Button>
                 <Button type="submit">
-                  {isEditing ? "Save changes" : "Record transaction"}
+                  {isEditing
+                    ? "Save changes"
+                    : transferMode
+                      ? "Record transfer"
+                      : "Record transaction"}
                 </Button>
               </div>
             </DialogFooter>

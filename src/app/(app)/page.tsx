@@ -4,6 +4,7 @@ import { Reveal } from "@/components/reveal";
 import { Button } from "@/components/ui/button";
 import { SummaryCards } from "@/components/dashboard/summary-cards";
 import { CashflowChart } from "@/components/dashboard/cashflow-chart";
+import { NetWorthChart } from "@/components/dashboard/networth-chart";
 import { SpendingCategories } from "@/components/dashboard/spending-categories";
 import { RecentTransactions } from "@/components/dashboard/recent-transactions";
 import { AccountsOverview } from "@/components/dashboard/accounts-overview";
@@ -45,6 +46,15 @@ export default function DashboardPage() {
       <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* Left column */}
         <div className="flex flex-col gap-5 lg:col-span-2">
+          <Reveal delay={0.18}>
+            <Panel
+              title="Net worth"
+              description="Trend over the last 6 months"
+            >
+              <NetWorthChart />
+            </Panel>
+          </Reveal>
+
           <Reveal delay={0.2}>
             <Panel
               title="Cash flow"

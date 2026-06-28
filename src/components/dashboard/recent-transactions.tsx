@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 import { useAppData } from "@/components/transactions/transactions-provider";
 
 export function RecentTransactions({ limit = 6 }: { limit?: number }) {
-  const { items, getAccount, getCategory } = useAppData();
+  const { items, getAccount, getCategory, openTransactionDetail } = useAppData();
   const rows = items.slice(0, limit);
 
   if (rows.length === 0) {
@@ -26,7 +26,8 @@ export function RecentTransactions({ limit = 6 }: { limit?: number }) {
         return (
           <li
             key={t.id}
-            className="flex items-center gap-3 rounded-lg px-2 py-3 transition-colors hover:bg-muted/50"
+            onClick={() => openTransactionDetail(t)}
+            className="flex cursor-pointer items-center gap-3 rounded-lg px-2 py-3 transition-colors hover:bg-muted/50"
           >
             <span
               className="flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold"
@@ -44,9 +45,11 @@ export function RecentTransactions({ limit = 6 }: { limit?: number }) {
               </p>
               <p className="mt-0.5 flex items-center gap-1.5 truncate text-xs text-muted-foreground">
                 <span>
-                  {t.items?.length
-                    ? `Split · ${t.items.length} items`
-                    : category?.label}
+                  {t.isTransfer
+                    ? "Transfer"
+                    : t.items?.length
+                      ? `Split · ${t.items.length} items`
+                      : category?.label}
                 </span>
                 <span className="text-border">·</span>
                 <span>{account?.name}</span>
@@ -67,10 +70,17 @@ export function RecentTransactions({ limit = 6 }: { limit?: number }) {
               <p
                 className={cn(
                   "num text-sm font-medium tabular-nums",
-                  isIncome ? "text-income" : "text-foreground"
+                  t.isTransfer
+                    ? "text-muted-foreground"
+                    : isIncome
+                      ? "text-income"
+                      : "text-foreground"
                 )}
               >
-                {formatMoney(t.amount, { signed: isIncome, currency: t.currency })}
+                {formatMoney(t.amount, {
+                  signed: isIncome && !t.isTransfer,
+                  currency: t.currency,
+                })}
               </p>
               <p className="num mt-0.5 text-[11px] text-muted-foreground">
                 {formatRelativeDay(t.date)}

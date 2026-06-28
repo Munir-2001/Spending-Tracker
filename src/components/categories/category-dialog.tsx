@@ -15,21 +15,30 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { Category } from "@/lib/data";
 import type { NewCategoryInput } from "@/lib/schema";
+import { useAppData } from "@/components/transactions/transactions-provider";
 import { cn } from "@/lib/utils";
 
+// Category identity colors live as --cat-* tokens in globals.css so they adapt to dark mode.
 const PALETTE = [
-  "var(--income)",
-  "oklch(0.55 0.11 250)",
-  "oklch(0.62 0.12 150)",
-  "oklch(0.66 0.14 50)",
-  "oklch(0.6 0.11 280)",
-  "oklch(0.6 0.13 330)",
-  "oklch(0.68 0.13 90)",
-  "oklch(0.64 0.1 200)",
-  "oklch(0.58 0.06 70)",
-  "oklch(0.6 0.16 20)",
+  "var(--cat-1)",
+  "var(--cat-2)",
+  "var(--cat-3)",
+  "var(--cat-4)",
+  "var(--cat-5)",
+  "var(--cat-6)",
+  "var(--cat-7)",
+  "var(--cat-8)",
+  "var(--cat-9)",
+  "var(--cat-10)",
 ];
 
 type Kind = "income" | "expense";
@@ -50,10 +59,17 @@ export function CategoryDialog({
   editing: Category | null;
 }) {
   const isEditing = Boolean(editing);
+  const { categories } = useAppData();
   const [name, setName] = useState("");
   const [kind, setKind] = useState<Kind>("expense");
   const [color, setColor] = useState(PALETTE[1]);
+  const [parentId, setParentId] = useState<string>("none");
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  // Possible parents: top-level categories of the same kind (and not itself).
+  const parents = categories.filter(
+    (c) => !c.parentId && c.kind === kind && c.id !== editing?.id
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -62,17 +78,24 @@ export function CategoryDialog({
       setName(editing.label);
       setKind(editing.kind);
       setColor(editing.tint);
+      setParentId(editing.parentId ?? "none");
     } else {
       setName("");
       setKind("expense");
       setColor(PALETTE[1]);
+      setParentId("none");
     }
   }, [open, editing]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return toast.error("Give the category a name.");
-    const input: NewCategoryInput = { name: name.trim(), kind, color };
+    const input: NewCategoryInput = {
+      name: name.trim(),
+      kind,
+      color,
+      parentId: parentId === "none" ? null : parentId,
+    };
     if (editing) {
       onSave(editing.id, input);
       toast.success("Category updated", { description: name.trim() });
@@ -114,7 +137,10 @@ export function CategoryDialog({
               <button
                 key={k}
                 type="button"
-                onClick={() => setKind(k)}
+                onClick={() => {
+                  setKind(k);
+                  setParentId("none");
+                }}
                 className={cn(
                   "rounded-md py-1.5 text-sm font-medium capitalize transition-colors",
                   kind === k
@@ -135,10 +161,39 @@ export function CategoryDialog({
               id="cat-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Groceries"
+              placeholder="Meat"
               autoFocus
             />
           </div>
+
+          {parents.length > 0 && (
+            <div className="space-y-1.5">
+              <Label>Parent category (optional)</Label>
+              <Select value={parentId} onValueChange={setParentId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None — top level</SelectItem>
+                  {parents.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="size-2 rounded-full"
+                          style={{ backgroundColor: p.tint }}
+                        />
+                        {p.label}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                Nest under a parent (e.g. Meat under Groceries). Spending rolls up
+                to the parent in reports.
+              </p>
+            </div>
+          )}
 
           <div className="space-y-1.5">
             <Label>Color</Label>

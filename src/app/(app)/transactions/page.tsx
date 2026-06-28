@@ -41,6 +41,7 @@ export default function TransactionsPage() {
     openEditTransaction,
     deleteTransaction,
     openImport,
+    openTransactionDetail,
     baseCurrency,
     fx,
   } = useAppData();
@@ -171,7 +172,11 @@ export default function TransactionsPage() {
                 const acc = getAccount(t.accountId);
                 const isIncome = t.amount > 0;
                 return (
-                  <TableRow key={t.id} className="group">
+                  <TableRow
+                    key={t.id}
+                    className="group cursor-pointer"
+                    onClick={() => openTransactionDetail(t)}
+                  >
                     <TableCell className="num whitespace-nowrap pl-5 text-xs text-muted-foreground">
                       {formatFullDate(t.date)}
                     </TableCell>
@@ -184,7 +189,11 @@ export default function TransactionsPage() {
                       )}
                     </TableCell>
                     <TableCell>
-                      {t.items?.length ? (
+                      {t.isTransfer ? (
+                        <span className="inline-flex items-center gap-1.5 rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
+                          Transfer
+                        </span>
+                      ) : t.items?.length ? (
                         <span className="inline-flex items-center gap-1.5 rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
                           Split · {t.items.length}
                         </span>
@@ -209,7 +218,10 @@ export default function TransactionsPage() {
                     >
                       {formatMoney(t.amount, { signed: isIncome, currency: t.currency })}
                     </TableCell>
-                    <TableCell className="pr-3 text-right">
+                    <TableCell
+                      className="pr-3 text-right"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
                           <Button

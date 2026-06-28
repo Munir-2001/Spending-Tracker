@@ -4,7 +4,21 @@
  * server actions. All amounts are integer MINOR UNITS of the row's `currency`.
  */
 
-import type { AccountSubtype, BudgetPeriod, CategoryKind } from "@/lib/schema";
+import type {
+  AccountSubtype,
+  AssetType,
+  BudgetPeriod,
+  CategoryKind,
+} from "@/lib/schema";
+
+export type Asset = {
+  id: string;
+  name: string;
+  type: AssetType;
+  value: number; // minor units of `currency`
+  currency: string;
+  note: string | null;
+};
 
 export type Account = {
   id: string;
@@ -24,6 +38,7 @@ export type Category = {
   label: string;
   kind: CategoryKind;
   tint: string;
+  parentId: string | null; // null = top-level; otherwise a sub-category
 };
 
 export type TransactionItem = {
@@ -54,6 +69,8 @@ export type Transaction = {
   };
   /** True for the inflow recorded when a reimbursement is refunded (not income). */
   isReimbursement?: boolean;
+  /** True for a leg of a transfer between accounts/assets (not income/expense). */
+  isTransfer?: boolean;
   /** For a repayment inflow: the id of the reimbursable transaction it settles. */
   settlesId?: string;
 };

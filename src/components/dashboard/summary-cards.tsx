@@ -3,6 +3,7 @@
 import { Reveal } from "@/components/reveal";
 import { StatCard } from "@/components/dashboard/stat-card";
 import {
+  assetsBase,
   currenciesInUse,
   monthFlowsBase,
   netWorthBase,
@@ -12,12 +13,14 @@ import { formatMoney } from "@/lib/format";
 import { useAppData } from "@/components/transactions/transactions-provider";
 
 export function SummaryCards() {
-  const { accounts, items, balanceOf, baseCurrency, fx } = useAppData();
+  const { accounts, items, assets, balanceOf, baseCurrency, fx } = useAppData();
   const now = new Date();
   const monthName = now.toLocaleString("en-US", { month: "long" });
 
   const netWorth =
-    netWorthBase(accounts, balanceOf, fx) + pendingReceivablesBase(items, fx);
+    netWorthBase(accounts, balanceOf, fx) +
+    pendingReceivablesBase(items, fx) +
+    assetsBase(assets, fx);
   const { income, expense, net } = monthFlowsBase(
     items,
     now.getFullYear(),

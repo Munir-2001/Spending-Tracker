@@ -86,6 +86,8 @@ export type TransactionRow = {
   reimburse_settled_at: string | null;
   // True for the inflow created when a reimbursement is refunded (not income).
   is_reimbursement: boolean;
+  // True for both legs of a transfer between accounts/assets (not income/expense).
+  is_transfer: boolean;
   // For a repayment inflow: the reimbursable transaction it settles.
   settles_id: string | null;
   created_at: string;
@@ -113,6 +115,28 @@ export type BudgetRow = {
   created_at: string;
 };
 
+export type AssetType =
+  | "property"
+  | "vehicle"
+  | "crypto"
+  | "investment"
+  | "cash"
+  | "valuable"
+  | "other";
+
+export type AssetRow = {
+  id: string;
+  user_id: string;
+  org_id: string | null;
+  name: string; // encrypted at rest
+  type: AssetType;
+  value: number; // minor units of `currency`
+  currency: string;
+  note: string | null; // encrypted at rest
+  created_at: string;
+  updated_at: string;
+};
+
 export type UserSettingsRow = {
   user_id: string;
   base_currency: string;
@@ -128,6 +152,7 @@ export type TableMap = {
   transactions: TransactionRow;
   transaction_lines: TransactionLineRow;
   budgets: BudgetRow;
+  assets: AssetRow;
   user_settings: UserSettingsRow;
 };
 
@@ -155,6 +180,17 @@ export type NewTransactionInput = {
   reimbursement?: { person: string; amount: number; note: string };
 };
 
+/** Input for moving money between an account and another account or asset. */
+export type TransferInput = {
+  fromAccountId: string;
+  toKind: "account" | "asset";
+  toId: string;
+  amount: number; // positive minor units, in the FROM account's currency
+  toAmount: number; // positive minor units, in the destination's currency
+  date: string;
+  note: string;
+};
+
 /** Input for recording a repayment inflow that settles a reimbursable expense. */
 export type RepaymentInput = {
   claimId: string;
@@ -164,11 +200,21 @@ export type RepaymentInput = {
   date: string;
 };
 
+/** Input for creating/editing an asset. */
+export type NewAssetInput = {
+  name: string;
+  type: AssetType;
+  value: number; // minor units of `currency`
+  currency: string;
+  note: string | null;
+};
+
 /** Input for creating/editing a category (UI-facing, camelCase). */
 export type NewCategoryInput = {
   name: string;
   kind: CategoryKind;
   color: string;
+  parentId: string | null;
 };
 
 /** Input for creating an account (UI-facing, camelCase). */

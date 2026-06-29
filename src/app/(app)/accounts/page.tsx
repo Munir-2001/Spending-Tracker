@@ -27,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAppData } from "@/components/transactions/transactions-provider";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { formatMoney } from "@/lib/format";
 import { assetsBase, pendingReceivablesBase } from "@/lib/compute";
 import { cn } from "@/lib/utils";
@@ -53,6 +54,19 @@ export default function AccountsPage() {
     baseCurrency,
     fx,
   } = useAppData();
+  const confirm = useConfirm();
+
+  async function confirmDelete(account: Account) {
+    const ok = await confirm({
+      title: account.isGroup ? "Delete group?" : "Delete account?",
+      description: account.isGroup
+        ? `“${account.name}” will be removed. Its sub-accounts stay but become top-level.`
+        : `“${account.name}” will be removed. Any transactions on it are kept but no longer counted in a balance.`,
+      confirmText: "Delete",
+      tone: "danger",
+    });
+    if (ok) deleteAccount(account.id);
+  }
 
   const childrenOf = useMemo(() => {
     const map = new Map<string | null, Account[]>();
@@ -179,7 +193,7 @@ export default function AccountsPage() {
                         </span>
                         <RowMenu
                           onEdit={() => openEditAccount(node)}
-                          onDelete={() => deleteAccount(node.id)}
+                          onDelete={() => confirmDelete(node)}
                         />
                       </div>
                     </div>
@@ -190,7 +204,7 @@ export default function AccountsPage() {
                           account={c}
                           balance={balanceOf(c.id)}
                           onEdit={() => openEditAccount(c)}
-                          onDelete={() => deleteAccount(c.id)}
+                          onDelete={() => confirmDelete(c)}
                           onAdjust={() => openAdjustBalance(c)}
                         />
                       ))}
@@ -211,7 +225,7 @@ export default function AccountsPage() {
                       account={node}
                       balance={balanceOf(node.id)}
                       onEdit={() => openEditAccount(node)}
-                      onDelete={() => deleteAccount(node.id)}
+                      onDelete={() => confirmDelete(node)}
                       onAdjust={() => openAdjustBalance(node)}
                     />
                   </div>

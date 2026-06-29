@@ -9,6 +9,7 @@ import type {
   AssetType,
   BudgetPeriod,
   CategoryKind,
+  RecurringCadence,
 } from "@/lib/schema";
 
 export type Asset = {
@@ -80,4 +81,28 @@ export type Budget = {
   categoryId: string;
   amount: number; // base-currency minor units
   period: BudgetPeriod;
+};
+
+export type Goal = {
+  id: string;
+  name: string;
+  target: number; // minor units of `currency`
+  saved: number; // minor units already set aside
+  currency: string;
+  targetDate: string | null;
+  tint: string;
+};
+
+export type RecurringRule = {
+  id: string;
+  accountId: string;
+  categoryId: string; // "" when uncategorized
+  merchant: string;
+  amount: number; // signed minor units (neg = bill, pos = income)
+  currency: string;
+  cadence: RecurringCadence;
+  nextDate: string; // ISO date of next occurrence
+  autoPost: boolean;
+  lastPosted: string | null;
+  active: boolean;
 };

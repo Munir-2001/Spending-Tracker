@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 import { SummaryCards } from "@/components/dashboard/summary-cards";
 import { CashflowChart } from "@/components/dashboard/cashflow-chart";
 import { NetWorthChart } from "@/components/dashboard/networth-chart";
+import { NetWorthBreakdown } from "@/components/dashboard/networth-breakdown";
 import { SpendingCategories } from "@/components/dashboard/spending-categories";
 import { RecentTransactions } from "@/components/dashboard/recent-transactions";
 import { AccountsOverview } from "@/components/dashboard/accounts-overview";
+import { UpcomingBills } from "@/components/dashboard/upcoming-bills";
 
 function greeting() {
   const h = new Date().getHours();
@@ -55,6 +57,15 @@ export default function DashboardPage() {
             </Panel>
           </Reveal>
 
+          <Reveal delay={0.19}>
+            <Panel
+              title="What it's made of"
+              description="Every account & asset in your net worth"
+            >
+              <NetWorthBreakdown />
+            </Panel>
+          </Reveal>
+
           <Reveal delay={0.2}>
             <Panel
               title="Cash flow"
@@ -86,6 +97,12 @@ export default function DashboardPage() {
 
         {/* Right column */}
         <div className="flex flex-col gap-5">
+          <Reveal delay={0.28}>
+            <Panel title="Upcoming bills" description="Due in the next 14 days">
+              <UpcomingBills />
+            </Panel>
+          </Reveal>
+
           <Reveal delay={0.3}>
             <Panel title="Accounts" description="Balances across institutions">
               <AccountsOverview />

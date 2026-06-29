@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/table";
 import { Reveal } from "@/components/reveal";
 import { useAppData } from "@/components/transactions/transactions-provider";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { formatFullDate, formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -45,9 +46,20 @@ export default function TransactionsPage() {
     baseCurrency,
     fx,
   } = useAppData();
+  const confirm = useConfirm();
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("all");
   const [account, setAccount] = useState("all");
+
+  async function confirmDelete(id: string, merchant: string) {
+    const ok = await confirm({
+      title: "Delete transaction?",
+      description: `“${merchant}” will be permanently removed. This can’t be undone.`,
+      confirmText: "Delete",
+      tone: "danger",
+    });
+    if (ok) deleteTransaction(id);
+  }
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -240,7 +252,7 @@ export default function TransactionsPage() {
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             variant="destructive"
-                            onClick={() => deleteTransaction(t.id)}
+                            onClick={() => confirmDelete(t.id, t.merchant)}
                           >
                             <Trash2 className="size-4" />
                             Delete

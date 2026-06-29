@@ -4,16 +4,28 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { toast } from "sonner";
 
-import type { Account, Asset, Budget, Category, Transaction } from "@/lib/data";
+import type {
+  Account,
+  Asset,
+  Budget,
+  Category,
+  Goal,
+  RecurringRule,
+  Transaction,
+} from "@/lib/data";
 import type {
   NewAccountInput,
   NewAssetInput,
   NewCategoryInput,
+  NewGoalInput,
+  NewRecurringInput,
   NewTransactionInput,
   RepaymentInput,
   TransferInput,
@@ -34,6 +46,15 @@ import {
   recordTransfer as recordTransferAction,
   settleReimbursement as settleReimbursementAction,
   setBudget as setBudgetAction,
+  createGoal as createGoalAction,
+  updateGoal as updateGoalAction,
+  contributeGoal as contributeGoalAction,
+  deleteGoal as deleteGoalAction,
+  createRecurring as createRecurringAction,
+  updateRecurring as updateRecurringAction,
+  deleteRecurring as deleteRecurringAction,
+  postRecurring as postRecurringAction,
+  runDueRecurring as runDueRecurringAction,
   updateAccount,
   updateAsset as updateAssetAction,
   updateCategory as updateCategoryAction,
@@ -42,6 +63,9 @@ import {
   type AppSettings,
   type ImportRow,
 } from "@/server/actions";
+import { GoalDialog } from "@/components/goals/goal-dialog";
+import { RecurringDialog } from "@/components/recurring/recurring-dialog";
+import { loader } from "@/lib/loader";
 import { AddTransactionDialog } from "@/components/transactions/add-transaction-dialog";
 import { TransactionDetailDialog } from "@/components/transactions/transaction-detail-dialog";
 import { AddAccountDialog } from "@/components/accounts/add-account-dialog";
@@ -128,6 +152,30 @@ type Ctx = {
   openEditAsset: (a: Asset) => void;
   setAssetOpen: (open: boolean) => void;
 
+  // Savings goals
+  goals: Goal[];
+  addGoal: (input: NewGoalInput) => void;
+  saveGoal: (id: string, input: NewGoalInput) => void;
+  contributeGoal: (id: string, delta: number) => void;
+  deleteGoal: (id: string) => void;
+  isGoalOpen: boolean;
+  editingGoal: Goal | null;
+  openAddGoal: () => void;
+  openEditGoal: (g: Goal) => void;
+  setGoalOpen: (open: boolean) => void;
+
+  // Recurring rules + bill reminders
+  recurring: RecurringRule[];
+  addRecurring: (input: NewRecurringInput) => void;
+  saveRecurring: (id: string, input: NewRecurringInput) => void;
+  deleteRecurring: (id: string) => void;
+  postRecurring: (id: string) => void;
+  isRecurringOpen: boolean;
+  editingRecurring: RecurringRule | null;
+  openAddRecurring: () => void;
+  openEditRecurring: (r: RecurringRule) => void;
+  setRecurringOpen: (open: boolean) => void;
+
   // Lookups
   getAccount: (id: string) => Account | undefined;
   getCategory: (id: string) => Category | undefined;
@@ -152,6 +200,8 @@ export function TransactionsProvider({
   initialCategories,
   initialBudgets,
   initialAssets,
+  initialGoals,
+  initialRecurring,
   initialSettings,
   children,
 }: {
@@ -160,6 +210,8 @@ export function TransactionsProvider({
   initialCategories: Category[];
   initialBudgets: Budget[];
   initialAssets: Asset[];
+  initialGoals: Goal[];
+  initialRecurring: RecurringRule[];
   initialSettings: AppSettings;
   children: React.ReactNode;
 }) {
@@ -170,6 +222,14 @@ export function TransactionsProvider({
   const [categories, setCategories] = useState<Category[]>(initialCategories);
   const [budgets, setBudgets] = useState<Budget[]>(initialBudgets);
   const [assets, setAssets] = useState<Asset[]>(initialAssets);
+  const [goals, setGoals] = useState<Goal[]>(initialGoals);
+  const [recurring, setRecurring] = useState<RecurringRule[]>(initialRecurring);
+  const [isGoalOpen, setGoalOpenState] = useState(false);
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+  const [isRecurringOpen, setRecurringOpenState] = useState(false);
+  const [editingRecurring, setEditingRecurring] = useState<RecurringRule | null>(
+    null
+  );
   const [isAssetOpen, setAssetOpenState] = useState(false);
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [isCategoryOpen, setCategoryOpen] = useState(false);
@@ -224,6 +284,7 @@ export function TransactionsProvider({
   }, []);
 
   const settleReimbursement = useCallback((id: string) => {
+    loader.start();
     settleReimbursementAction(id)
       .then(({ updated, inflow }) => {
         setItems((prev) => {
@@ -233,10 +294,12 @@ export function TransactionsProvider({
         });
         toast.success("Marked as refunded");
       })
-      .catch(() => toast.error("Couldn't record the refund. Please try again."));
+      .catch(() => toast.error("Couldn't record the refund. Please try again."))
+      .finally(() => loader.done());
   }, []);
 
   const recordRepayment = useCallback((input: RepaymentInput) => {
+    loader.start();
     recordRepaymentAction(input)
       .then(({ updated, inflow }) => {
         setItems((prev) => {
@@ -250,10 +313,12 @@ export function TransactionsProvider({
           description: "Counted against what you were owed — not as income.",
         });
       })
-      .catch(() => toast.error("Couldn't record the repayment. Please try again."));
+      .catch(() => toast.error("Couldn't record the repayment. Please try again."))
+      .finally(() => loader.done());
   }, []);
 
   const recordTransfer = useCallback((input: TransferInput) => {
+    loader.start();
     recordTransferAction(input)
       .then(({ source, dest, asset }) => {
         setItems((prev) => {
@@ -265,15 +330,109 @@ export function TransactionsProvider({
           description: "Moved between holdings — not counted as spending.",
         });
       })
-      .catch(() => toast.error("Couldn't record the transfer. Please try again."));
+      .catch(() => toast.error("Couldn't record the transfer. Please try again."))
+      .finally(() => loader.done());
+  }, []);
+
+  // ── Savings goals ──────────────────────────────────────────────────────────
+  const addGoal = useCallback((input: NewGoalInput) => {
+    createGoalAction(input)
+      .then((g) => setGoals((prev) => [...prev, g]))
+      .catch(() => toast.error("Couldn't create the goal. Please try again."));
+  }, []);
+
+  const saveGoal = useCallback((id: string, input: NewGoalInput) => {
+    updateGoalAction(id, input)
+      .then((g) => {
+        if (g) setGoals((prev) => prev.map((x) => (x.id === id ? g : x)));
+      })
+      .catch(() => toast.error("Couldn't update the goal. Please try again."));
+  }, []);
+
+  const contributeGoal = useCallback((id: string, delta: number) => {
+    contributeGoalAction(id, delta)
+      .then((g) => {
+        if (g) setGoals((prev) => prev.map((x) => (x.id === id ? g : x)));
+      })
+      .catch(() => toast.error("Couldn't update the goal. Please try again."));
+  }, []);
+
+  const deleteGoal = useCallback((id: string) => {
+    deleteGoalAction(id)
+      .then(() => setGoals((prev) => prev.filter((x) => x.id !== id)))
+      .catch(() => toast.error("Couldn't delete the goal. Please try again."));
+  }, []);
+
+  // ── Recurring rules ────────────────────────────────────────────────────────
+  const addRecurring = useCallback((input: NewRecurringInput) => {
+    createRecurringAction(input)
+      .then((r) => setRecurring((prev) => [...prev, r]))
+      .catch(() => toast.error("Couldn't create the schedule. Please try again."));
+  }, []);
+
+  const saveRecurring = useCallback((id: string, input: NewRecurringInput) => {
+    updateRecurringAction(id, input)
+      .then((r) => {
+        if (r) setRecurring((prev) => prev.map((x) => (x.id === id ? r : x)));
+      })
+      .catch(() => toast.error("Couldn't update the schedule. Please try again."));
+  }, []);
+
+  const deleteRecurring = useCallback((id: string) => {
+    deleteRecurringAction(id)
+      .then(() => setRecurring((prev) => prev.filter((x) => x.id !== id)))
+      .catch(() => toast.error("Couldn't delete the schedule. Please try again."));
+  }, []);
+
+  const postRecurring = useCallback((id: string) => {
+    postRecurringAction(id)
+      .then(({ transaction, rule }) => {
+        if (transaction)
+          setItems((prev) => [transaction, ...prev].sort(byDateDesc));
+        if (rule) setRecurring((prev) => prev.map((x) => (x.id === id ? rule : x)));
+        toast.success("Posted", { description: "Added to your transactions." });
+      })
+      .catch(() => toast.error("Couldn't post it. Please try again."));
+  }, []);
+
+  // On mount, auto-post any due recurring rules (catch up missed occurrences).
+  const didCatchUp = useRef(false);
+  useEffect(() => {
+    if (didCatchUp.current) return;
+    didCatchUp.current = true;
+    runDueRecurringAction()
+      .then(({ transactions, rules }) => {
+        if (!transactions.length) return;
+        setItems((prev) => {
+          const seen = new Set(prev.map((t) => t.id));
+          const fresh = transactions.filter((t) => !seen.has(t.id));
+          return [...fresh, ...prev].sort(byDateDesc);
+        });
+        setRecurring((prev) =>
+          prev.map((x) => rules.find((r) => r.id === x.id) ?? x)
+        );
+        toast.success(
+          `Posted ${transactions.length} recurring ${
+            transactions.length === 1 ? "transaction" : "transactions"
+          }`
+        );
+      })
+      .catch(() => {
+        /* non-fatal: reminders still show on the page */
+      });
   }, []);
 
   const importTransactions = useCallback(
     async (accountId: string, categoryId: string | null, rows: ImportRow[]) => {
-      const res = await importTransactionsAction(accountId, categoryId, rows);
-      if (res.created.length)
-        setItems((prev) => [...res.created, ...prev].sort(byDateDesc));
-      return res;
+      loader.start();
+      try {
+        const res = await importTransactionsAction(accountId, categoryId, rows);
+        if (res.created.length)
+          setItems((prev) => [...res.created, ...prev].sort(byDateDesc));
+        return res;
+      } finally {
+        loader.done();
+      }
     },
     []
   );
@@ -523,6 +682,44 @@ export function TransactionsProvider({
         setAssetOpenState(true);
       },
       setAssetOpen,
+      goals,
+      addGoal,
+      saveGoal,
+      contributeGoal,
+      deleteGoal,
+      isGoalOpen,
+      editingGoal,
+      openAddGoal: () => {
+        setEditingGoal(null);
+        setGoalOpenState(true);
+      },
+      openEditGoal: (g: Goal) => {
+        setEditingGoal(g);
+        setGoalOpenState(true);
+      },
+      setGoalOpen: (open: boolean) => {
+        setGoalOpenState(open);
+        if (!open) setEditingGoal(null);
+      },
+      recurring,
+      addRecurring,
+      saveRecurring,
+      deleteRecurring,
+      postRecurring,
+      isRecurringOpen,
+      editingRecurring,
+      openAddRecurring: () => {
+        setEditingRecurring(null);
+        setRecurringOpenState(true);
+      },
+      openEditRecurring: (r: RecurringRule) => {
+        setEditingRecurring(r);
+        setRecurringOpenState(true);
+      },
+      setRecurringOpen: (open: boolean) => {
+        setRecurringOpenState(open);
+        if (!open) setEditingRecurring(null);
+      },
       getAccount: (id) => accountsById.get(id),
       getCategory: (id) => categoriesById.get(id),
       balanceOf: (id) => ownBalance.get(id) ?? 0,
@@ -573,6 +770,20 @@ export function TransactionsProvider({
       isAssetOpen,
       editingAsset,
       setAssetOpen,
+      goals,
+      addGoal,
+      saveGoal,
+      contributeGoal,
+      deleteGoal,
+      isGoalOpen,
+      editingGoal,
+      recurring,
+      addRecurring,
+      saveRecurring,
+      deleteRecurring,
+      postRecurring,
+      isRecurringOpen,
+      editingRecurring,
       accountsById,
       categoriesById,
       ownBalance,
@@ -655,6 +866,30 @@ export function TransactionsProvider({
         open={isAdjustOpen}
         onOpenChange={setAdjustOpen}
         account={adjustAccount}
+      />
+      <GoalDialog
+        open={isGoalOpen}
+        onOpenChange={(o) => {
+          setGoalOpenState(o);
+          if (!o) setEditingGoal(null);
+        }}
+        onCreate={addGoal}
+        onSave={saveGoal}
+        onDelete={deleteGoal}
+        editing={editingGoal}
+      />
+      <RecurringDialog
+        open={isRecurringOpen}
+        onOpenChange={(o) => {
+          setRecurringOpenState(o);
+          if (!o) setEditingRecurring(null);
+        }}
+        onCreate={addRecurring}
+        onSave={saveRecurring}
+        onDelete={deleteRecurring}
+        editing={editingRecurring}
+        accounts={accounts}
+        categories={categories}
       />
     </AppDataContext.Provider>
   );

@@ -15,10 +15,14 @@ import {
   type AssetRow,
   type BudgetRow,
   type CategoryRow,
+  type GoalRow,
   type NewAccountInput,
   type NewAssetInput,
   type NewCategoryInput,
+  type NewGoalInput,
+  type NewRecurringInput,
   type NewTransactionInput,
+  type RecurringRow,
   type RepaymentInput,
   type TransferInput,
   type TransactionLineRow,
@@ -30,6 +34,8 @@ import type {
   Asset,
   Budget,
   Category,
+  Goal,
+  RecurringRule,
   Transaction,
   TransactionItem,
 } from "@/lib/data";
@@ -898,4 +904,276 @@ export async function setBudget(
   await db.insert("budgets", row);
   revalidatePath("/budgets");
   return budgetToUi(row);
+}
+
+// ── Savings goals ────────────────────────────────────────────────────────────
+function goalToUi(r: GoalRow): Goal {
+  return {
+    id: r.id,
+    name: r.name,
+    target: r.target_amount,
+    saved: r.saved_amount,
+    currency: r.currency,
+    targetDate: r.target_date,
+    tint: r.color ?? "var(--chart-1)",
+  };
+}
+
+function revalidateGoalViews() {
+  revalidatePath("/");
+  revalidatePath("/goals");
+}
+
+export async function listGoals(): Promise<Goal[]> {
+  const rows = await db.selectAll("goals");
+  return rows.map(goalToUi);
+}
+
+export async function createGoal(raw: NewGoalInput): Promise<Goal> {
+  const input = v.goalInput.parse(raw) as NewGoalInput;
+  const userId = await getUserId();
+  const now = new Date().toISOString();
+  const row: GoalRow = {
+    id: randomUUID(),
+    user_id: userId,
+    org_id: null,
+    name: input.name,
+    target_amount: input.target,
+    saved_amount: input.saved,
+    currency: input.currency,
+    target_date: input.targetDate,
+    color: input.color,
+    created_at: now,
+    updated_at: now,
+  };
+  await db.insert("goals", row);
+  revalidateGoalViews();
+  return goalToUi(row);
+}
+
+export async function updateGoal(
+  id: string,
+  raw: NewGoalInput
+): Promise<Goal | null> {
+  const input = v.goalInput.parse(raw) as NewGoalInput;
+  v.idInput.parse(id);
+  const updated = await db.update("goals", id, {
+    name: input.name,
+    target_amount: input.target,
+    saved_amount: input.saved,
+    currency: input.currency,
+    target_date: input.targetDate,
+    color: input.color,
+    updated_at: new Date().toISOString(),
+  });
+  revalidateGoalViews();
+  return updated ? goalToUi(updated) : null;
+}
+
+/** Add (or remove, if negative) funds set aside toward a goal. */
+export async function contributeGoal(
+  id: string,
+  delta: number
+): Promise<Goal | null> {
+  v.idInput.parse(id);
+  v.goalContribution.parse(delta);
+  const goal = await db.findById("goals", id);
+  if (!goal) return null;
+  const saved = Math.max(0, goal.saved_amount + Math.trunc(delta));
+  const updated = await db.update("goals", id, {
+    saved_amount: saved,
+    updated_at: new Date().toISOString(),
+  });
+  revalidateGoalViews();
+  return updated ? goalToUi(updated) : null;
+}
+
+export async function deleteGoal(id: string): Promise<void> {
+  v.idInput.parse(id);
+  await db.remove("goals", id);
+  revalidateGoalViews();
+}
+
+// ── Recurring rules + bill reminders ─────────────────────────────────────────
+function recurringToUi(r: RecurringRow): RecurringRule {
+  return {
+    id: r.id,
+    accountId: r.account_id,
+    categoryId: r.category_id ?? "",
+    merchant: dec(r.description) ?? "",
+    amount: r.amount,
+    currency: r.currency,
+    cadence: r.cadence,
+    nextDate: r.next_date,
+    autoPost: r.auto_post,
+    lastPosted: r.last_posted,
+    active: r.is_active,
+  };
+}
+
+/** Advance an ISO date by one cadence period (parsed in UTC to avoid drift). */
+function advanceDate(iso: string, cadence: RecurringRow["cadence"]): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  if (cadence === "weekly") d.setUTCDate(d.getUTCDate() + 7);
+  else if (cadence === "monthly") d.setUTCMonth(d.getUTCMonth() + 1);
+  else d.setUTCFullYear(d.getUTCFullYear() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function recurringTxnRow(
+  rule: RecurringRow,
+  date: string,
+  userId: string
+): TransactionRow {
+  const now = new Date().toISOString();
+  return {
+    id: randomUUID(),
+    user_id: userId,
+    org_id: null,
+    account_id: rule.account_id,
+    category_id: rule.category_id,
+    date,
+    description: rule.description, // already encrypted on the rule
+    amount: rule.amount,
+    currency: rule.currency,
+    status: "posted",
+    source: "recurring",
+    external_id: null,
+    notes: null,
+    ...noReimburse,
+    created_at: now,
+    updated_at: now,
+  };
+}
+
+function revalidateRecurringViews() {
+  revalidatePath("/");
+  revalidatePath("/recurring");
+}
+
+export async function listRecurring(): Promise<RecurringRule[]> {
+  const rows = await db.selectAll("recurring_rules");
+  return rows.map(recurringToUi);
+}
+
+export async function createRecurring(
+  raw: NewRecurringInput
+): Promise<RecurringRule> {
+  const input = v.recurringInput.parse(raw) as NewRecurringInput;
+  const userId = await getUserId();
+  const now = new Date().toISOString();
+  const row: RecurringRow = {
+    id: randomUUID(),
+    user_id: userId,
+    org_id: null,
+    account_id: input.accountId,
+    category_id: input.categoryId || null,
+    description: enc(input.merchant)!,
+    amount: input.amount,
+    currency: input.currency,
+    cadence: input.cadence,
+    next_date: input.nextDate,
+    auto_post: input.autoPost,
+    last_posted: null,
+    is_active: true,
+    created_at: now,
+    updated_at: now,
+  };
+  await db.insert("recurring_rules", row);
+  revalidateRecurringViews();
+  return recurringToUi(row);
+}
+
+export async function updateRecurring(
+  id: string,
+  raw: NewRecurringInput
+): Promise<RecurringRule | null> {
+  const input = v.recurringInput.parse(raw) as NewRecurringInput;
+  v.idInput.parse(id);
+  const updated = await db.update("recurring_rules", id, {
+    account_id: input.accountId,
+    category_id: input.categoryId || null,
+    description: enc(input.merchant)!,
+    amount: input.amount,
+    currency: input.currency,
+    cadence: input.cadence,
+    next_date: input.nextDate,
+    auto_post: input.autoPost,
+    updated_at: new Date().toISOString(),
+  });
+  revalidateRecurringViews();
+  return updated ? recurringToUi(updated) : null;
+}
+
+export async function deleteRecurring(id: string): Promise<void> {
+  v.idInput.parse(id);
+  await db.remove("recurring_rules", id);
+  revalidateRecurringViews();
+}
+
+/** Post a single occurrence of a rule now and advance it one period. */
+export async function postRecurring(
+  id: string
+): Promise<{ transaction: Transaction | null; rule: RecurringRule | null }> {
+  v.idInput.parse(id);
+  const userId = await getUserId();
+  const rule = await db.findById("recurring_rules", id);
+  if (!rule) return { transaction: null, rule: null };
+  const occurrence = rule.next_date;
+  const txn = recurringTxnRow(rule, occurrence, userId);
+  await db.insert("transactions", txn);
+  const updated = await db.update("recurring_rules", id, {
+    next_date: advanceDate(occurrence, rule.cadence),
+    last_posted: occurrence,
+    updated_at: new Date().toISOString(),
+  });
+  revalidateTxnViews();
+  revalidateRecurringViews();
+  return {
+    transaction: transactionToUi(txn),
+    rule: updated ? recurringToUi(updated) : null,
+  };
+}
+
+/**
+ * Catch up every auto-post rule whose next date has passed: create one
+ * transaction per missed occurrence (capped) and advance the rule. Called on
+ * app mount. Manual (remind-only) rules are left for the user to post.
+ */
+export async function runDueRecurring(): Promise<{
+  transactions: Transaction[];
+  rules: RecurringRule[];
+}> {
+  const userId = await getUserId();
+  const today = new Date().toISOString().slice(0, 10);
+  const rules = await db.selectAll("recurring_rules");
+  const created: Transaction[] = [];
+  const touched: RecurringRule[] = [];
+
+  for (const rule of rules) {
+    if (!rule.is_active || !rule.auto_post || rule.next_date > today) continue;
+    let cursor = rule.next_date;
+    let last = rule.last_posted;
+    let guard = 0;
+    while (cursor <= today && guard < 36) {
+      const txn = recurringTxnRow(rule, cursor, userId);
+      await db.insert("transactions", txn);
+      created.push(transactionToUi(txn));
+      last = cursor;
+      cursor = advanceDate(cursor, rule.cadence);
+      guard++;
+    }
+    const updated = await db.update("recurring_rules", rule.id, {
+      next_date: cursor,
+      last_posted: last,
+      updated_at: new Date().toISOString(),
+    });
+    if (updated) touched.push(recurringToUi(updated));
+  }
+
+  if (created.length) {
+    revalidateTxnViews();
+    revalidateRecurringViews();
+  }
+  return { transactions: created, rules: touched };
 }

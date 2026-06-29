@@ -26,6 +26,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAppData } from "@/components/transactions/transactions-provider";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import { assetsBase } from "@/lib/compute";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -52,6 +53,17 @@ const typeLabels: Record<AssetType, string> = {
 export default function AssetsPage() {
   const { assets, openAddAsset, openEditAsset, deleteAsset, baseCurrency, fx } =
     useAppData();
+  const confirm = useConfirm();
+
+  async function confirmDelete(asset: Asset) {
+    const ok = await confirm({
+      title: "Delete asset?",
+      description: `“${asset.name}” will be removed from your net worth.`,
+      confirmText: "Delete",
+      tone: "danger",
+    });
+    if (ok) deleteAsset(asset.id);
+  }
 
   const total = assetsBase(assets, fx);
   const sorted = [...assets].sort(
@@ -121,7 +133,7 @@ export default function AssetsPage() {
                     currency: baseCurrency,
                   })}
                   onEdit={() => openEditAsset(a)}
-                  onDelete={() => deleteAsset(a.id)}
+                  onDelete={() => confirmDelete(a)}
                 />
               ))}
             </ul>

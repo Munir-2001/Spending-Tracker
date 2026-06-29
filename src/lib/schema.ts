@@ -144,6 +144,42 @@ export type UserSettingsRow = {
   updated_at: string;
 };
 
+/** A savings goal — envelope-style progress toward a target. */
+export type GoalRow = {
+  id: string;
+  user_id: string;
+  org_id: string | null;
+  name: string;
+  target_amount: number; // minor units of `currency`
+  saved_amount: number; // minor units; current progress
+  currency: string;
+  target_date: string | null; // optional ISO deadline
+  color: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type RecurringCadence = "weekly" | "monthly" | "yearly";
+
+/** A scheduled recurring transaction (rent, salary, a subscription). */
+export type RecurringRow = {
+  id: string;
+  user_id: string;
+  org_id: string | null;
+  account_id: string;
+  category_id: string | null;
+  description: string; // encrypted at rest
+  amount: number; // signed minor units (neg = bill/expense, pos = income)
+  currency: string;
+  cadence: RecurringCadence;
+  next_date: string; // ISO date of the next occurrence
+  auto_post: boolean; // true = auto-create when due; false = remind only
+  last_posted: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 /** Maps a table name to its row type — used by the generic data store. */
 export type TableMap = {
   profiles: ProfileRow;
@@ -153,6 +189,8 @@ export type TableMap = {
   transaction_lines: TransactionLineRow;
   budgets: BudgetRow;
   assets: AssetRow;
+  goals: GoalRow;
+  recurring_rules: RecurringRow;
   user_settings: UserSettingsRow;
 };
 
@@ -228,6 +266,28 @@ export type NewAccountInput = {
   openingBalance: number; // minor units of `currency`
   parentId: string | null;
   isGroup: boolean;
+};
+
+/** Input for creating/editing a savings goal (UI-facing, camelCase). */
+export type NewGoalInput = {
+  name: string;
+  target: number; // minor units of `currency`
+  saved: number; // minor units already set aside
+  currency: string;
+  targetDate: string | null;
+  color: string;
+};
+
+/** Input for creating/editing a recurring rule (UI-facing, camelCase). */
+export type NewRecurringInput = {
+  merchant: string;
+  amount: number; // signed minor units (neg = bill/expense, pos = income)
+  categoryId: string; // may be "" for income / uncategorized
+  accountId: string;
+  currency: string;
+  cadence: RecurringCadence;
+  nextDate: string;
+  autoPost: boolean;
 };
 
 /** The single demo user until Supabase Auth is wired. */

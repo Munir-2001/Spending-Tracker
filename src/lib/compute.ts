@@ -3,7 +3,13 @@
  * base currency via FX rates. Pure functions — fed by the provider's state.
  */
 
-import type { Account, Asset, Category, Transaction } from "@/lib/data";
+import type {
+  Account,
+  Asset,
+  Category,
+  RecurringRule,
+  Transaction,
+} from "@/lib/data";
 import type { Fx } from "@/lib/currency";
 
 /**
@@ -68,6 +74,46 @@ export function assetsBase(assets: Asset[], fx: Fx): number {
   return assets.reduce((sum, a) => sum + fx.toBase(a.value, a.currency), 0);
 }
 
+export type NetWorthSlice = {
+  id: string;
+  label: string;
+  kind: "account" | "asset" | "receivable";
+  value: number; // base-currency minor units (signed; neg = liability/overdraft)
+};
+
+/**
+ * Every component of net worth as a base-currency slice: each non-group account
+ * balance, each asset, and money owed to you. Sorted largest first.
+ */
+export function netWorthComposition(
+  accounts: Account[],
+  balanceOf: (id: string) => number,
+  assets: Asset[],
+  transactions: Transaction[],
+  fx: Fx
+): NetWorthSlice[] {
+  const slices: NetWorthSlice[] = [];
+  for (const a of accounts.filter((x) => !x.isGroup)) {
+    const value = fx.toBase(balanceOf(a.id), a.currency);
+    if (value !== 0)
+      slices.push({ id: a.id, label: a.name, kind: "account", value });
+  }
+  for (const a of assets) {
+    const value = fx.toBase(a.value, a.currency);
+    if (value !== 0)
+      slices.push({ id: a.id, label: a.name, kind: "asset", value });
+  }
+  const receivable = pendingReceivablesBase(transactions, fx);
+  if (receivable > 0)
+    slices.push({
+      id: "receivables",
+      label: "Owed to you",
+      kind: "receivable",
+      value: receivable,
+    });
+  return slices.sort((a, b) => b.value - a.value);
+}
+
 export type NetWorthPoint = { month: string; value: number };
 
 /**
@@ -108,6 +154,23 @@ export function netWorthSeriesBase(
     points.push({ month: d.toISOString().slice(0, 10), value: total });
   }
   return points;
+}
+
+/**
+ * Active expense rules due within the next `days` (overdue ones included),
+ * soonest first — the data behind "upcoming bills."
+ */
+export function upcomingBills(
+  rules: RecurringRule[],
+  anchor: Date,
+  days = 14
+): RecurringRule[] {
+  const horizon = new Date(anchor);
+  horizon.setDate(horizon.getDate() + days);
+  const horizonIso = horizon.toISOString().slice(0, 10);
+  return rules
+    .filter((r) => r.active && r.amount < 0 && r.nextDate <= horizonIso)
+    .sort((a, b) => a.nextDate.localeCompare(b.nextDate));
 }
 
 export type Subscription = {

@@ -11,14 +11,27 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAppData } from "@/components/transactions/transactions-provider";
+import { useConfirm } from "@/components/ui/confirm-dialog";
 import type { Category } from "@/lib/data";
 
 export default function CategoriesPage() {
   const { categories, openAddCategory, openEditCategory, deleteCategory } =
     useAppData();
+  const confirm = useConfirm();
 
   const expense = categories.filter((c) => c.kind === "expense");
   const income = categories.filter((c) => c.kind === "income");
+
+  async function confirmDelete(id: string) {
+    const c = categories.find((x) => x.id === id);
+    const ok = await confirm({
+      title: "Delete category?",
+      description: `“${c?.label ?? "This category"}” will be removed. Transactions keep their data but lose this label.`,
+      confirmText: "Delete",
+      tone: "danger",
+    });
+    if (ok) deleteCategory(id);
+  }
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-10 md:px-8 md:py-14">
@@ -64,7 +77,7 @@ export default function CategoriesPage() {
               title="Expense"
               items={expense}
               onEdit={openEditCategory}
-              onDelete={deleteCategory}
+              onDelete={confirmDelete}
             />
           </Reveal>
           {income.length > 0 && (

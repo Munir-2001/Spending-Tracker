@@ -78,7 +78,9 @@ export function formatRelativeDay(iso: string, now = new Date()): string {
   const diffDays = Math.round((startOf(now) - startOf(d)) / 86_400_000);
   if (diffDays === 0) return "Today";
   if (diffDays === 1) return "Yesterday";
+  if (diffDays === -1) return "Tomorrow";
   if (diffDays > 1 && diffDays < 7) return `${diffDays} days ago`;
+  if (diffDays < -1 && diffDays > -7) return `in ${-diffDays} days`;
   return formatDate(iso);
 }
 

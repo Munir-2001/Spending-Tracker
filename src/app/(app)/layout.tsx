@@ -5,6 +5,8 @@ import { ModeToggle } from "@/components/mode-toggle";
 import { PrivacyToggle } from "@/components/privacy-toggle";
 import { TransactionsProvider } from "@/components/transactions/transactions-provider";
 import { NewTransactionButton } from "@/components/transactions/new-transaction-button";
+import { RouteProgress } from "@/components/ui/route-progress";
+import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 import {
   getCurrentUser,
   getSettings,
@@ -12,6 +14,8 @@ import {
   listAssets,
   listBudgets,
   listCategories,
+  listGoals,
+  listRecurring,
   listTransactions,
 } from "@/server/actions";
 import {
@@ -32,6 +36,8 @@ export default async function AppLayout({
   let initialCategories: Awaited<ReturnType<typeof listCategories>> = [];
   let initialBudgets: Awaited<ReturnType<typeof listBudgets>> = [];
   let initialAssets: Awaited<ReturnType<typeof listAssets>> = [];
+  let initialGoals: Awaited<ReturnType<typeof listGoals>> = [];
+  let initialRecurring: Awaited<ReturnType<typeof listRecurring>> = [];
   let initialSettings: Awaited<ReturnType<typeof getSettings>> = {
     baseCurrency: "USD",
     rates: {},
@@ -45,6 +51,8 @@ export default async function AppLayout({
       initialCategories,
       initialBudgets,
       initialAssets,
+      initialGoals,
+      initialRecurring,
       initialSettings,
       user,
     ] = await Promise.all([
@@ -53,6 +61,8 @@ export default async function AppLayout({
       listCategories(),
       listBudgets(),
       listAssets(),
+      listGoals(),
+      listRecurring(),
       getSettings(),
       getCurrentUser(),
     ]);
@@ -62,12 +72,16 @@ export default async function AppLayout({
 
   return (
     <SidebarProvider>
+      <RouteProgress />
+      <ConfirmProvider>
       <TransactionsProvider
         initialTransactions={initialTransactions}
         initialAccounts={initialAccounts}
         initialCategories={initialCategories}
         initialBudgets={initialBudgets}
         initialAssets={initialAssets}
+        initialGoals={initialGoals}
+        initialRecurring={initialRecurring}
         initialSettings={initialSettings}
       >
         <AppSidebar user={user} />
@@ -90,6 +104,7 @@ export default async function AppLayout({
         <main className="flex-1">{children}</main>
         </SidebarInset>
       </TransactionsProvider>
+      </ConfirmProvider>
     </SidebarProvider>
   );
 }

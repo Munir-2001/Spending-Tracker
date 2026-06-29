@@ -139,5 +139,28 @@ export const settingsInput = z.object({
   ),
 });
 
+export const goalInput = z.object({
+  name: reqStr(80),
+  target: z.number().int().positive(),
+  saved: z.number().int().nonnegative(),
+  currency,
+  targetDate: isoDate.nullable(),
+  color: colorStr,
+});
+
+export const recurringInput = z.object({
+  merchant: reqStr(200),
+  amount: intAmount.refine((n) => n !== 0, "amount is required"),
+  categoryId: z.string().trim().max(64),
+  accountId: idStr,
+  currency,
+  cadence: z.enum(["weekly", "monthly", "yearly"]),
+  nextDate: isoDate,
+  autoPost: z.boolean(),
+});
+
+// A signed integer delta for adjusting a goal's saved amount.
+export const goalContribution = z.number().int();
+
 export const idInput = idStr;
 export const categoryIdInput = z.string().trim().max(64);

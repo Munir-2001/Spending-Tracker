@@ -119,10 +119,14 @@ export type AssetType =
   | "property"
   | "vehicle"
   | "crypto"
+  | "gold"
   | "investment"
   | "cash"
   | "valuable"
   | "other";
+
+/** Physical unit a precious-metal holding is measured in. */
+export type MetalUnit = "tola" | "gram" | "gram10" | "ozt";
 
 export type AssetRow = {
   id: string;
@@ -130,9 +134,15 @@ export type AssetRow = {
   org_id: string | null;
   name: string; // encrypted at rest
   type: AssetType;
-  value: number; // minor units of `currency`
+  value: number; // minor units of `currency` (for gold: last-known market value)
   currency: string;
   note: string | null; // encrypted at rest
+  // Market-priced holdings (gold, later silver/crypto). Null for manual assets.
+  symbol: string | null; // e.g. "XAU"
+  quantity: number | null; // amount held, in `unit`
+  unit: MetalUnit | null;
+  karat: number | null; // 24 = pure; scales value by karat/24
+  cost_basis: number | null; // minor units of `currency` — what you paid
   created_at: string;
   updated_at: string;
 };
@@ -245,6 +255,12 @@ export type NewAssetInput = {
   value: number; // minor units of `currency`
   currency: string;
   note: string | null;
+  // Market-priced (gold) fields — omit/null for manual assets.
+  symbol?: string | null;
+  quantity?: number | null;
+  unit?: MetalUnit | null;
+  karat?: number | null;
+  costBasis?: number | null;
 };
 
 /** Input for creating/editing a category (UI-facing, camelCase). */

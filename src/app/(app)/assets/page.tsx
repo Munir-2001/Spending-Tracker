@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import {
   Home,
   Car,
   Coins,
+  Bitcoin,
   TrendingUp,
   Banknote,
   Gem,
@@ -13,6 +15,7 @@ import {
   Pencil,
   Trash2,
   Boxes,
+  RefreshCw,
 } from "lucide-react";
 
 import type { Asset } from "@/lib/data";
@@ -28,13 +31,15 @@ import {
 import { useAppData } from "@/components/transactions/transactions-provider";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { assetsBase } from "@/lib/compute";
-import { formatMoney } from "@/lib/format";
+import { UNIT_LABEL } from "@/lib/gold";
+import { formatMoney, formatRelativeDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const icons: Record<AssetType, typeof Home> = {
   property: Home,
   vehicle: Car,
-  crypto: Coins,
+  gold: Coins,
+  crypto: Bitcoin,
   investment: TrendingUp,
   cash: Banknote,
   valuable: Gem,
@@ -43,6 +48,7 @@ const icons: Record<AssetType, typeof Home> = {
 const typeLabels: Record<AssetType, string> = {
   property: "Property",
   vehicle: "Vehicle",
+  gold: "Gold",
   crypto: "Crypto",
   investment: "Investment",
   cash: "Cash",
@@ -51,9 +57,28 @@ const typeLabels: Record<AssetType, string> = {
 };
 
 export default function AssetsPage() {
-  const { assets, openAddAsset, openEditAsset, deleteAsset, baseCurrency, fx } =
-    useAppData();
+  const {
+    assets,
+    openAddAsset,
+    openEditAsset,
+    deleteAsset,
+    refreshGold,
+    goldPricedAt,
+    baseCurrency,
+    fx,
+  } = useAppData();
   const confirm = useConfirm();
+  const [refreshing, setRefreshing] = useState(false);
+  const hasGold = assets.some((a) => a.symbol === "XAU");
+
+  async function handleRefresh() {
+    setRefreshing(true);
+    try {
+      await refreshGold();
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   async function confirmDelete(asset: Asset) {
     const ok = await confirm({
@@ -81,12 +106,37 @@ export default function AssetsPage() {
               your net worth.
             </p>
           </div>
-          <Button size="sm" className="gap-1.5" onClick={openAddAsset}>
-            <Plus className="size-4" />
-            Add asset
-          </Button>
+          <div className="flex items-center gap-2">
+            {hasGold && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-1.5"
+                onClick={handleRefresh}
+                disabled={refreshing}
+              >
+                <RefreshCw
+                  className={cn("size-4", refreshing && "animate-spin")}
+                />
+                {refreshing ? "Updating…" : "Refresh prices"}
+              </Button>
+            )}
+            <Button size="sm" className="gap-1.5" onClick={openAddAsset}>
+              <Plus className="size-4" />
+              Add asset
+            </Button>
+          </div>
         </div>
       </Reveal>
+
+      {hasGold && goldPricedAt && (
+        <Reveal delay={0.03}>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Gold priced {formatRelativeDay(goldPricedAt)} · live spot × your
+            holdings.
+          </p>
+        </Reveal>
+      )}
 
       {assets.length === 0 ? (
         <Reveal delay={0.05}>
@@ -157,6 +207,15 @@ function AssetRow({
 }) {
   const Icon = icons[asset.type] ?? Package;
   const sameAsBase = baseValue === formatMoney(asset.value, { currency: asset.currency });
+  const isGold = asset.symbol === "XAU";
+  const pl =
+    isGold && asset.costBasis != null ? asset.value - asset.costBasis : null;
+  const plPct =
+    pl != null && asset.costBasis ? (pl / asset.costBasis) * 100 : null;
+  const goldSub =
+    isGold && asset.quantity != null && asset.unit
+      ? `${asset.quantity} ${UNIT_LABEL[asset.unit]} · ${asset.karat ?? 24}K`
+      : null;
   return (
     <li className="flex items-center gap-3 px-3 py-3">
       <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-surface text-muted-foreground">
@@ -166,15 +225,28 @@ function AssetRow({
         <p className="truncate text-sm font-medium leading-tight">{asset.name}</p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {typeLabels[asset.type]}
-          {asset.note ? ` · ${asset.note}` : ""}
+          {goldSub ? ` · ${goldSub}` : ""}
+          {!isGold && asset.note ? ` · ${asset.note}` : ""}
         </p>
       </div>
       <div className="text-right">
         <p className="num text-sm font-semibold tabular-nums">
           {formatMoney(asset.value, { currency: asset.currency })}
         </p>
-        {!sameAsBase && (
-          <p className="num text-[11px] text-muted-foreground">≈ {baseValue}</p>
+        {pl != null ? (
+          <p
+            className={cn(
+              "num text-[11px] font-medium tabular-nums",
+              pl >= 0 ? "text-income" : "text-expense"
+            )}
+          >
+            {formatMoney(pl, { currency: asset.currency, signed: true })}
+            {plPct != null ? ` · ${pl >= 0 ? "+" : ""}${plPct.toFixed(1)}%` : ""}
+          </p>
+        ) : (
+          !sameAsBase && (
+            <p className="num text-[11px] text-muted-foreground">≈ {baseValue}</p>
+          )
         )}
       </div>
       <DropdownMenu>

@@ -9,6 +9,7 @@ import type {
   AssetType,
   BudgetPeriod,
   CategoryKind,
+  MetalUnit,
   RecurringCadence,
 } from "@/lib/schema";
 
@@ -16,9 +17,15 @@ export type Asset = {
   id: string;
   name: string;
   type: AssetType;
-  value: number; // minor units of `currency`
+  value: number; // minor units of `currency` (for gold: last-known market value)
   currency: string;
   note: string | null;
+  // Market-priced (gold) fields; null for manual assets.
+  symbol: string | null;
+  quantity: number | null;
+  unit: MetalUnit | null;
+  karat: number | null;
+  costBasis: number | null; // minor units of `currency` — what you paid
 };
 
 export type Account = {

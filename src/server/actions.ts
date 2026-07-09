@@ -39,7 +39,9 @@ import type {
   Transaction,
   TransactionItem,
 } from "@/lib/data";
-import { DEFAULT_BASE_CURRENCY, DEFAULT_RATES } from "@/lib/currency";
+import { DEFAULT_BASE_CURRENCY, DEFAULT_RATES, toMinorUnits } from "@/lib/currency";
+import { goldValueMajor } from "@/lib/gold";
+import { getGoldQuote } from "@/server/prices";
 
 /** The current authenticated user's id (or the demo user in local mode). */
 async function getUserId(): Promise<string> {
@@ -181,6 +183,22 @@ function assetToUi(r: AssetRow): Asset {
     value: r.value,
     currency: r.currency,
     note: dec(r.note),
+    symbol: r.symbol ?? null,
+    quantity: r.quantity ?? null,
+    unit: r.unit ?? null,
+    karat: r.karat ?? null,
+    costBasis: r.cost_basis ?? null,
+  };
+}
+
+// Market-priced (gold) columns pulled from an input; null for manual assets.
+function marketFields(input: NewAssetInput) {
+  return {
+    symbol: input.symbol ?? null,
+    quantity: input.quantity ?? null,
+    unit: input.unit ?? null,
+    karat: input.karat ?? null,
+    cost_basis: input.costBasis ?? null,
   };
 }
 
@@ -209,6 +227,7 @@ export async function createAsset(raw: NewAssetInput): Promise<Asset> {
     value: input.value,
     currency: input.currency,
     note: enc(input.note),
+    ...marketFields(input),
     created_at: now,
     updated_at: now,
   };
@@ -229,6 +248,7 @@ export async function updateAsset(
     value: input.value,
     currency: input.currency,
     note: enc(input.note),
+    ...marketFields(input),
     updated_at: new Date().toISOString(),
   });
   revalidateAssetViews();
@@ -239,6 +259,49 @@ export async function deleteAsset(id: string): Promise<void> {
   v.idInput.parse(id);
   await db.remove("assets", id);
   revalidateAssetViews();
+}
+
+/**
+ * Re-price every market-priced (gold) asset from the live spot and persist the
+ * new market value. Returns the refreshed assets, when they were priced, and
+ * whether a live fetch actually happened (false = no API key / offline, values
+ * are last-known). Safe to call with no gold assets.
+ */
+export async function refreshGoldPrices(): Promise<{
+  assets: Asset[];
+  pricedAt: string | null;
+  live: boolean;
+}> {
+  const rows = await db.selectAll("assets");
+  const gold = rows.filter(
+    (r) => r.symbol === "XAU" && r.quantity && r.quantity > 0 && r.unit
+  );
+  if (gold.length === 0)
+    return { assets: rows.map(assetToUi), pricedAt: null, live: false };
+
+  let pricedAt: string | null = null;
+  let live = false;
+  const quotes = new Map<string, Awaited<ReturnType<typeof getGoldQuote>>>();
+
+  for (const r of gold) {
+    if (!quotes.has(r.currency))
+      quotes.set(r.currency, await getGoldQuote(r.currency));
+    const quote = quotes.get(r.currency);
+    if (!quote) continue;
+    const major = goldValueMajor(r.quantity!, r.unit!, r.karat, quote.gram24k);
+    const value = toMinorUnits(major, r.currency);
+    await db.update("assets", r.id, {
+      value,
+      updated_at: new Date().toISOString(),
+    });
+    pricedAt = quote.at;
+    // Priced within the last minute ⇒ this call fetched it fresh.
+    if (Date.now() - Date.parse(quote.at) < 60_000) live = true;
+  }
+
+  revalidateAssetViews();
+  const updated = await db.selectAll("assets");
+  return { assets: updated.map(assetToUi), pricedAt, live };
 }
 
 function revalidateCategoryViews() {

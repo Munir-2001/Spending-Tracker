@@ -86,6 +86,7 @@ export const assetInput = z.object({
     "property",
     "vehicle",
     "crypto",
+    "gold",
     "investment",
     "cash",
     "valuable",
@@ -94,6 +95,16 @@ export const assetInput = z.object({
   value: intAmount,
   currency,
   note: z.string().trim().max(500).nullable(),
+  // Market-priced (gold) — optional.
+  symbol: z.enum(["XAU"]).nullable().optional(),
+  quantity: z
+    .number()
+    .refine((n) => Number.isFinite(n) && n > 0, "quantity must be > 0")
+    .nullable()
+    .optional(),
+  unit: z.enum(["tola", "gram", "gram10", "ozt"]).nullable().optional(),
+  karat: z.number().int().min(1).max(24).nullable().optional(),
+  costBasis: intAmount.nonnegative().nullable().optional(),
 });
 
 export const categoryInput = z.object({

@@ -55,6 +55,7 @@ import {
   deleteRecurring as deleteRecurringAction,
   postRecurring as postRecurringAction,
   runDueRecurring as runDueRecurringAction,
+  refreshGoldPrices as refreshGoldPricesAction,
   updateAccount,
   updateAsset as updateAssetAction,
   updateCategory as updateCategoryAction,
@@ -151,6 +152,9 @@ type Ctx = {
   openAddAsset: () => void;
   openEditAsset: (a: Asset) => void;
   setAssetOpen: (open: boolean) => void;
+  /** Re-price gold assets from the live spot. */
+  refreshGold: (silent?: boolean) => Promise<void>;
+  goldPricedAt: string | null;
 
   // Savings goals
   goals: Goal[];
@@ -222,6 +226,7 @@ export function TransactionsProvider({
   const [categories, setCategories] = useState<Category[]>(initialCategories);
   const [budgets, setBudgets] = useState<Budget[]>(initialBudgets);
   const [assets, setAssets] = useState<Asset[]>(initialAssets);
+  const [goldPricedAt, setGoldPricedAt] = useState<string | null>(null);
   const [goals, setGoals] = useState<Goal[]>(initialGoals);
   const [recurring, setRecurring] = useState<RecurringRule[]>(initialRecurring);
   const [isGoalOpen, setGoalOpenState] = useState(false);
@@ -421,6 +426,39 @@ export function TransactionsProvider({
         /* non-fatal: reminders still show on the page */
       });
   }, []);
+
+  const refreshGold = useCallback(async (silent = false) => {
+    if (!silent) loader.start();
+    try {
+      const { assets: next, pricedAt, live } = await refreshGoldPricesAction();
+      setAssets(next);
+      if (pricedAt) setGoldPricedAt(pricedAt);
+      if (!silent) {
+        if (live) toast.success("Gold prices updated");
+        else if (pricedAt)
+          toast.message("Showing last saved prices", {
+            description: "Add GOLD_API_KEY to .env for live updates.",
+          });
+        else
+          toast.message("No live prices yet", {
+            description: "Add GOLD_API_KEY to .env to fetch gold prices.",
+          });
+      }
+    } catch {
+      if (!silent) toast.error("Couldn't refresh gold prices.");
+    } finally {
+      if (!silent) loader.done();
+    }
+  }, []);
+
+  // On mount, quietly re-price gold from the (daily-cached) spot.
+  const didGold = useRef(false);
+  useEffect(() => {
+    if (didGold.current) return;
+    if (!assets.some((a) => a.symbol === "XAU")) return;
+    didGold.current = true;
+    refreshGold(true);
+  }, [assets, refreshGold]);
 
   const importTransactions = useCallback(
     async (accountId: string, categoryId: string | null, rows: ImportRow[]) => {
@@ -682,6 +720,8 @@ export function TransactionsProvider({
         setAssetOpenState(true);
       },
       setAssetOpen,
+      refreshGold,
+      goldPricedAt,
       goals,
       addGoal,
       saveGoal,
@@ -770,6 +810,8 @@ export function TransactionsProvider({
       isAssetOpen,
       editingAsset,
       setAssetOpen,
+      refreshGold,
+      goldPricedAt,
       goals,
       addGoal,
       saveGoal,

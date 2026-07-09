@@ -81,6 +81,8 @@ export type Transaction = {
   isTransfer?: boolean;
   /** For a repayment inflow: the id of the reimbursable transaction it settles. */
   settlesId?: string;
+  /** Free-text note (transfer memo, refund reference, etc.). */
+  notes?: string;
 };
 
 export type Budget = {

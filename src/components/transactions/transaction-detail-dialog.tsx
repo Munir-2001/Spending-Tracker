@@ -82,6 +82,11 @@ export function TransactionDetailDialog({
                 Repayment · not income
               </span>
             )}
+            {t.isTransfer && !t.isReimbursement && (
+              <span className="rounded bg-foreground/[0.08] px-1.5 py-px text-[10px] font-medium text-muted-foreground">
+                Transfer · not income/expense
+              </span>
+            )}
           </div>
         </div>
 
@@ -108,6 +113,14 @@ export function TransactionDetailDialog({
           />
           <Row label="Currency" value={t.currency} />
         </dl>
+
+        {/* Note */}
+        {t.notes && (
+          <div className="rounded-xl border border-border/60 bg-surface px-3.5 py-2.5">
+            <p className="text-xs text-muted-foreground">Note</p>
+            <p className="mt-0.5 text-sm">{t.notes}</p>
+          </div>
+        )}
 
         {/* Split items */}
         {t.items && t.items.length > 0 && (

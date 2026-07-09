@@ -145,6 +145,7 @@ function transactionToUi(
     isReimbursement: r.is_reimbursement ?? false,
     isTransfer: r.is_transfer ?? false,
     settlesId: r.settles_id ?? undefined,
+    notes: dec(r.notes) ?? undefined,
   };
 }
 
@@ -471,7 +472,7 @@ function buildLines(
   const rows: TransactionLineRow[] = input.items.map((it) => ({
     id: randomUUID(),
     transaction_id: transactionId,
-    category_id: it.categoryId,
+    category_id: it.categoryId || null, // "" → null (uuid column)
     description: enc(it.description) ?? "",
     amount: it.amount,
     created_at: now,
@@ -497,7 +498,7 @@ export async function createTransaction(
     user_id: userId,
     org_id: null,
     account_id: input.accountId,
-    category_id: split ? null : input.categoryId,
+    category_id: split ? null : input.categoryId || null,
     date: input.date,
     description: enc(input.merchant)!,
     amount: split ? total : input.amount,
@@ -539,7 +540,7 @@ export async function updateTransaction(
 
   const updated = await db.update("transactions", id, {
     account_id: input.accountId,
-    category_id: split ? null : input.categoryId,
+    category_id: split ? null : input.categoryId || null,
     date: input.date,
     description: enc(input.merchant)!,
     amount: split ? total : input.amount,
@@ -821,7 +822,7 @@ export async function importTransactions(
       user_id: userId,
       org_id: null,
       account_id: accountId,
-      category_id: defaultCategoryId,
+      category_id: defaultCategoryId || null,
       date: r.date,
       description: enc(r.description || "Imported transaction")!,
       amount: r.amount,

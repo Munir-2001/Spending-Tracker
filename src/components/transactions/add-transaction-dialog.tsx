@@ -189,7 +189,11 @@ export function AddTransactionDialog({
       setCurrency(defAcc?.currency ?? "USD");
       setCategoryId((prev) => prev || expenseCategories[0]?.id || "");
     }
-  }, [open, editing, selectable, expenseCategories, accountsById, accountId]);
+    // Initialize only when the dialog opens or a different transaction is loaded.
+    // Must NOT depend on field state (accountId, etc.) — otherwise editing a field
+    // re-runs this and resets the form (e.g. picking a new account snapped back).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing]);
 
   const symbol = currencyInfo(currency).symbol;
   const transferMode = kind === "transfer" && !isEditing;

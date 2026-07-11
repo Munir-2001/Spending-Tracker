@@ -45,7 +45,10 @@ export async function updateSession(request: NextRequest) {
   // Publicly reachable without signing in: the landing (which hosts the Google
   // OAuth button), the OAuth callback, and legal pages.
   const isPublicRoute =
-    path === "/" || path.startsWith("/auth") || path.startsWith("/privacy");
+    path === "/" ||
+    path.startsWith("/auth") ||
+    path.startsWith("/privacy") ||
+    path.startsWith("/terms");
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();

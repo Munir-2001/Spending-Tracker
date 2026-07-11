@@ -79,7 +79,7 @@ export async function signOut() {
   if (!SUPABASE_CONFIGURED) return redirect("/");
   const supabase = await createClient();
   await supabase.auth.signOut();
-  redirect("/login");
+  redirect("/"); // back to the landing
 }
 
 // ── Row → UI mappers ────────────────────────────────────────────────────────

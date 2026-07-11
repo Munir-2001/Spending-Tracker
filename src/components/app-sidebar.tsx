@@ -16,8 +16,11 @@ import {
   Repeat,
   PiggyBank,
   CalendarClock,
+  Sparkles,
   Settings,
   LifeBuoy,
+  HelpCircle,
+  ShieldCheck,
   LogOut,
 } from "lucide-react";
 
@@ -38,7 +41,7 @@ import {
 } from "@/components/ui/sidebar";
 
 const primaryNav = [
-  { title: "Dashboard", href: "/", icon: LayoutDashboard },
+  { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { title: "Transactions", href: "/transactions", icon: ArrowLeftRight },
   { title: "Accounts", href: "/accounts", icon: Wallet },
   { title: "Assets", href: "/assets", icon: Boxes },
@@ -50,12 +53,15 @@ const primaryNav = [
   { title: "Reimbursements", href: "/reimbursements", icon: HandCoins },
   { title: "Insights", href: "/insights", icon: ChartPie },
   { title: "Reports", href: "/reports", icon: PieChart },
+  { title: "Wrapped", href: "/wrapped", icon: Sparkles },
   { title: "Ledger", href: "/ledger", icon: BookOpen },
 ];
 
 const secondaryNav = [
   { title: "Settings", href: "/settings", icon: Settings },
   { title: "Support", href: "/support", icon: LifeBuoy },
+  { title: "FAQ", href: "/faq", icon: HelpCircle },
+  { title: "Privacy", href: "/privacy", icon: ShieldCheck },
 ];
 
 export function AppSidebar({
@@ -77,7 +83,7 @@ export function AppSidebar({
     <Sidebar collapsible="icon" className="border-r border-border/60">
       <SidebarHeader className="px-3 pt-4 pb-2">
         <Link
-          href="/"
+          href="/dashboard"
           className="flex items-center gap-2.5 px-1 group-data-[collapsible=icon]:justify-center"
         >
           <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">

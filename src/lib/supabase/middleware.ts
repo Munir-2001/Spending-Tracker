@@ -4,7 +4,7 @@ import { SUPABASE_CONFIGURED } from "@/lib/supabase/config";
 
 /**
  * Refreshes the Supabase session on every request and guards routes:
- * unauthenticated users are sent to /login, signed-in users away from it.
+ * unauthenticated users are sent to the landing (/), signed-in users to /dashboard.
  * In local mode (no Supabase keys) auth is skipped entirely.
  */
 export async function updateSession(request: NextRequest) {
@@ -42,16 +42,20 @@ export async function updateSession(request: NextRequest) {
   }
 
   const path = request.nextUrl.pathname;
-  const isAuthRoute = path.startsWith("/login") || path.startsWith("/auth");
+  // Publicly reachable without signing in: the landing (which hosts the Google
+  // OAuth button), the OAuth callback, and legal pages.
+  const isPublicRoute =
+    path === "/" || path.startsWith("/auth") || path.startsWith("/privacy");
 
-  if (!user && !isAuthRoute) {
+  if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();
-    url.pathname = "/login";
+    url.pathname = "/"; // send them to the landing to sign in
     return NextResponse.redirect(url);
   }
-  if (user && path === "/login") {
+  // Signed-in users skip the landing and go straight to the app.
+  if (user && path === "/") {
     const url = request.nextUrl.clone();
-    url.pathname = "/";
+    url.pathname = "/dashboard";
     return NextResponse.redirect(url);
   }
 

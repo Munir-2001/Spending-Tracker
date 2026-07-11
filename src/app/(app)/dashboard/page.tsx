@@ -1,4 +1,5 @@
-import { ArrowUpRight, Download } from "lucide-react";
+import Link from "next/link";
+import { ArrowUpRight, Download, Sparkles } from "lucide-react";
 
 import { Reveal } from "@/components/reveal";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,28 @@ export default function DashboardPage() {
             <span className="hidden sm:inline">Export</span>
           </Button>
         </div>
+      </Reveal>
+
+      {/* Money Wrapped teaser */}
+      <Reveal delay={0.12}>
+        <Link
+          href="/wrapped"
+          className="group relative mt-5 flex items-center gap-4 overflow-hidden rounded-2xl px-5 py-4 text-[#171207] shadow-sm transition-transform hover:-translate-y-0.5"
+          style={{ background: "linear-gradient(110deg, #E9B44C 0%, #E4603E 100%)" }}
+        >
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#171207] text-[#F6F1E7]">
+            <Sparkles className="size-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="display text-lg leading-tight">
+              Your {new Date().toLocaleString("en-US", { month: "long" })}, wrapped
+            </p>
+            <p className="truncate text-sm text-[#171207]/70">
+              Your month in money — the habits, the splurges, the wins.
+            </p>
+          </div>
+          <ArrowUpRight className="size-5 shrink-0 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+        </Link>
       </Reveal>
 
       {/* Stat cards */}

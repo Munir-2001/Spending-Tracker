@@ -255,6 +255,117 @@ export function rollupCategoryId(
   return byId.get(categoryId)?.parentId ?? categoryId;
 }
 
+export type WrappedStats = {
+  year: number;
+  month: number; // 0-based
+  label: string; // month name, e.g. "July"
+  totalSpent: number; // base minor units
+  totalIncome: number;
+  net: number;
+  txnCount: number;
+  savingsRate: number | null; // 0..1, or null if no income
+  topCategories: { label: string; tint: string; amount: number; share: number }[];
+  biggestSplurge: { merchant: string; amount: number; date: string } | null;
+  busiestDay: { date: string; amount: number } | null;
+  topMerchant: { merchant: string; count: number } | null;
+  hasData: boolean;
+};
+
+export const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/**
+ * Playful month-in-review aggregates (for "Money Wrapped"). Scoped to one
+ * `year`/`month` (month is 0-based). Everything is rolled to base currency;
+ * transfers and reimbursements are excluded, sub-categories fold into parents.
+ */
+export function wrappedStats(
+  transactions: Transaction[],
+  categories: Category[],
+  fx: Fx,
+  year: number,
+  month: number
+): WrappedStats {
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const prefix = `${year}-${String(month + 1).padStart(2, "0")}`;
+  const rows = transactions.filter(
+    (t) => !t.isTransfer && !t.isReimbursement && t.date.startsWith(prefix)
+  );
+
+  let totalSpent = 0;
+  let totalIncome = 0;
+  const byCat = new Map<string, number>();
+  const byDay = new Map<string, number>();
+  const merchantFreq = new Map<string, { merchant: string; count: number }>();
+  let biggest: WrappedStats["biggestSplurge"] = null;
+
+  for (const t of rows) {
+    if (t.amount > 0) {
+      totalIncome += fx.toBase(t.amount, t.currency);
+      continue;
+    }
+    const spend = -fx.toBase(t.amount, t.currency); // positive
+    if (spend <= 0) continue;
+    totalSpent += spend;
+
+    byDay.set(t.date, (byDay.get(t.date) ?? 0) + spend);
+
+    if (!biggest || spend > biggest.amount)
+      biggest = { merchant: t.merchant, amount: spend, date: t.date };
+
+    const key = t.merchant.trim().toLowerCase();
+    if (key) {
+      const prev = merchantFreq.get(key);
+      merchantFreq.set(key, {
+        merchant: t.merchant.trim(),
+        count: (prev?.count ?? 0) + 1,
+      });
+    }
+
+    for (const line of categoryLinesOf(t)) {
+      if (line.amount >= 0) continue;
+      const rollId = rollupCategoryId(line.categoryId, byId);
+      byCat.set(rollId, (byCat.get(rollId) ?? 0) + -fx.toBase(line.amount, t.currency));
+    }
+  }
+
+  const topCategories = [...byCat.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5)
+    .map(([id, amount]) => ({
+      label: byId.get(id)?.label ?? "Uncategorized",
+      tint: byId.get(id)?.tint ?? "var(--muted-foreground)",
+      amount,
+      share: totalSpent > 0 ? amount / totalSpent : 0,
+    }));
+
+  let busiestDay: WrappedStats["busiestDay"] = null;
+  for (const [date, amount] of byDay)
+    if (!busiestDay || amount > busiestDay.amount) busiestDay = { date, amount };
+
+  const topMerchant =
+    [...merchantFreq.values()].sort((a, b) => b.count - a.count)[0] ?? null;
+
+  return {
+    year,
+    month,
+    label: MONTHS[month] ?? "",
+    totalSpent,
+    totalIncome,
+    net: totalIncome - totalSpent,
+    txnCount: rows.length,
+    savingsRate:
+      totalIncome > 0 ? Math.max(0, (totalIncome - totalSpent) / totalIncome) : null,
+    topCategories,
+    biggestSplurge: biggest,
+    busiestDay,
+    topMerchant: topMerchant && topMerchant.count > 1 ? topMerchant : null,
+    hasData: rows.length > 0,
+  };
+}
+
 /**
  * Expense totals by category for a month, base currency, sorted desc.
  * Sub-categories roll up into their parent.

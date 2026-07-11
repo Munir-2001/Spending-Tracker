@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 
 import { LedgerMark } from "@/components/logo";
 import { StorySteps } from "@/components/landing/story";
+import { Notice } from "@/components/landing/notice";
+import { Tape } from "@/components/landing/tape";
 import { createClient } from "@/lib/supabase/client";
 
 // Self-contained "quiet-luxury" palette — the marketing surface commits to a
@@ -14,15 +16,12 @@ import { createClient } from "@/lib/supabase/client";
 const INK = "#0E0D0B";
 const CREAM = "#F6F1E7";
 const GOLD = "#E9B44C";
-const GREEN = "#9BB56B";
-const RED = "#DE8A6A";
 
 const rise: Variants = {
-  hidden: { opacity: 0, y: 22, filter: "blur(8px)" },
+  hidden: { opacity: 0, y: 22 },
   show: {
     opacity: 1,
     y: 0,
-    filter: "blur(0px)",
     transition: { duration: 0.85, ease: [0.16, 1, 0.3, 1] },
   },
 };
@@ -31,29 +30,39 @@ const stagger: Variants = {
   show: { transition: { staggerChildren: 0.09, delayChildren: 0.15 } },
 };
 
-const TAPE: { k: string; m: string; a: string; t: "up" | "down" | "flat" }[] = [
-  { k: "Salary", m: "monthly income", a: "+ €3,200.00", t: "up" },
-  { k: "Groceries", m: "Eurospin", a: "− €42.10", t: "down" },
-  { k: "Gold", m: "3 tola · 24k", a: "+ ₨437,000", t: "up" },
-  { k: "Rent", m: "Opera apt.", a: "− €1,050.00", t: "down" },
-  { k: "Transfer", m: "Revolut → Meezan", a: "₨100,000", t: "flat" },
-  { k: "Dining", m: "Sapori", a: "− €28.50", t: "down" },
-  { k: "Refund", m: "from Inaam", a: "+ €13.50", t: "up" },
-  { k: "Subscription", m: "Claude AI", a: "− ₨3,025", t: "down" },
-];
-
 export function Landing() {
   const reduce = useReducedMotion();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Surface a failed OAuth round-trip (the callback redirects here with ?error).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("error")) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setError("It may have timed out or been cancelled — please try again.");
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   async function signIn() {
+    setError(null);
     setLoading(true);
-    const supabase = createClient();
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
-    });
-    if (error) setLoading(false); // else the browser is already navigating away
+    try {
+      const supabase = createClient();
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: "google",
+        options: { redirectTo: `${window.location.origin}/auth/callback` },
+      });
+      if (error) {
+        setError(error.message || "Couldn't start Google sign-in — please try again.");
+        setLoading(false);
+      }
+      // otherwise the browser is already navigating to Google
+    } catch {
+      setError("Couldn't reach Google. Check your connection and try again.");
+      setLoading(false);
+    }
   }
 
   return (
@@ -230,50 +239,29 @@ export function Landing() {
             <Link href="/privacy" className="hover:opacity-100">
               Privacy
             </Link>
+            <Link href="/terms" className="hover:opacity-100">
+              Terms
+            </Link>
             <button onClick={signIn} disabled={loading} className="hover:opacity-70 disabled:opacity-50">
               Sign in
             </button>
           </div>
         </footer>
       </div>
-    </div>
-  );
-}
 
-function Tape({
-  reduce,
-  direction,
-  slow,
-}: {
-  reduce: boolean;
-  direction: 1 | -1;
-  slow?: boolean;
-}) {
-  const items = [...TAPE, ...TAPE];
-  const color = (t: "up" | "down" | "flat") =>
-    t === "up" ? GREEN : t === "down" ? RED : `${CREAM}88`;
-  return (
-    <div className="flex overflow-hidden py-4">
-      <motion.div
-        className="flex shrink-0 items-center gap-10 pr-10"
-        animate={reduce ? undefined : { x: direction === -1 ? ["0%", "-50%"] : ["-50%", "0%"] }}
-        transition={{ duration: slow ? 60 : 44, ease: "linear", repeat: Infinity }}
-      >
-        {items.map((e, i) => (
-          <span key={i} className="flex shrink-0 items-center gap-3 whitespace-nowrap text-sm">
-            <span className="num text-[11px] uppercase tracking-widest" style={{ color: `${CREAM}55` }}>
-              {e.k}
-            </span>
-            <span style={{ color: `${CREAM}c0` }}>{e.m}</span>
-            <span className="num tabular-nums" style={{ color: color(e.t) }}>
-              {e.a}
-            </span>
-            <span aria-hidden style={{ color: `${CREAM}30` }}>
-              ·
-            </span>
-          </span>
-        ))}
-      </motion.div>
+      {/* OAuth failure notice */}
+      <Notice
+        open={!!error}
+        tone="error"
+        title="Sign-in didn't go through"
+        message={error ?? undefined}
+        action={{
+          label: loading ? "Retrying…" : "Try again →",
+          onClick: signIn,
+          disabled: loading,
+        }}
+        onDismiss={() => setError(null)}
+      />
     </div>
   );
 }
@@ -284,7 +272,7 @@ function Grain() {
   return (
     <div
       aria-hidden
-      className="pointer-events-none fixed inset-0 z-0 opacity-[0.04] mix-blend-screen"
+      className="pointer-events-none fixed inset-0 z-0 opacity-[0.05]"
       style={{ backgroundImage: `url("data:image/svg+xml,${svg}")` }}
     />
   );

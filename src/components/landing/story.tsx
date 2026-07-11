@@ -37,11 +37,10 @@ const card = {
 } as const;
 
 const rise: Variants = {
-  hidden: { opacity: 0, x: 26, filter: "blur(5px)" },
+  hidden: { opacity: 0, x: 26 },
   show: {
     opacity: 1,
     x: 0,
-    filter: "blur(0px)",
     transition: { duration: 0.7, ease: [0.16, 1, 0.3, 1] },
   },
 };
@@ -172,7 +171,7 @@ function Step({
       {/* accent glow near the number for a pop of contrast */}
       <span
         aria-hidden
-        className="pointer-events-none absolute size-80 rounded-full blur-[90px]"
+        className="pointer-events-none absolute size-80 rounded-full"
         style={{
           background: `radial-gradient(circle, ${accent}2e 0%, transparent 70%)`,
           top: "-5rem",
@@ -252,9 +251,9 @@ function Step({
 // ── Visual 1 · account cards that deal in ────────────────────────────────────
 function AccountsVisual() {
   const accts = [
-    { icon: CreditCard, name: "Revolut", sub: "EUR · debit", bal: "€1,283.80", tone: CREAM },
-    { icon: Landmark, name: "Standard Chartered", sub: "PKR · bank", bal: "₨1,941,829", tone: CREAM },
-    { icon: Coins, name: "Gold", sub: "3 tola · 24k", bal: "▲ 12.4%", tone: GREEN },
+    { icon: CreditCard, name: "Amex Card", sub: "EUR · debit", bal: "€1,480.00", tone: CREAM },
+    { icon: Landmark, name: "CitiBank", sub: "USD · bank", bal: "$12,850", tone: CREAM },
+    { icon: Coins, name: "Gold", sub: "2 tola · 24k", bal: "▲ 12.4%", tone: GREEN },
     { icon: Banknote, name: "Cash Wallet", sub: "EUR · cash", bal: "€280.00", tone: CREAM },
   ];
   return (
@@ -309,7 +308,7 @@ function AccountsVisual() {
 // ── Visual · assets, valued live ─────────────────────────────────────────────
 function AssetsVisual() {
   const others = [
-    { icon: Home, name: "Apartment", sub: "Trento", val: "€185,000", pl: null },
+    { icon: Home, name: "Apartment", sub: "property", val: "€185,000", pl: null },
     { icon: Bitcoin, name: "Bitcoin", sub: "0.4 BTC", val: "€26,800", pl: "▲ 5.2%" },
   ];
   const sp = [[0, 20], [16, 14], [32, 17], [48, 8], [64, 11], [80, 3]];
@@ -328,7 +327,7 @@ function AssetsVisual() {
       >
         <span
           aria-hidden
-          className="pointer-events-none absolute -right-8 -top-8 size-28 rounded-full blur-2xl"
+          className="pointer-events-none absolute -right-8 -top-8 size-28 rounded-full"
           style={{ background: `radial-gradient(circle, ${GOLD}3a, transparent 70%)` }}
         />
         <div className="relative flex items-center gap-3">
@@ -343,7 +342,7 @@ function AssetsVisual() {
               Gold
             </p>
             <p className="text-xs" style={{ color: `${CREAM}66` }}>
-              3 tola · 24k
+              2 tola · 24k
             </p>
           </div>
           <span
@@ -355,7 +354,7 @@ function AssetsVisual() {
         </div>
         <div className="relative mt-3 flex items-end justify-between">
           <span className="num text-2xl font-semibold" style={{ color: CREAM }}>
-            ₨437,000
+            $3,880
           </span>
           <svg viewBox="0 0 80 24" width="80" height="24">
             <motion.path
@@ -546,7 +545,7 @@ function StatChip({
 function BudgetVisual() {
   const rows = [
     { icon: ShoppingBag, name: "Groceries", amt: "€420", pct: 62, color: GOLD },
-    { icon: Home, name: "Rent", amt: "€1,050", pct: 45, color: GREEN },
+    { icon: Home, name: "Rent", amt: "€1,200", pct: 45, color: GREEN },
     { icon: UtensilsCrossed, name: "Dining", amt: "€180", pct: 78, color: RED },
     { icon: CreditCard, name: "Transport", amt: "€96", pct: 34, color: VIOLET },
   ];

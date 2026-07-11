@@ -155,6 +155,10 @@ export default function PublicPrivacyPage() {
 
         <footer className="mt-12 border-t border-border/60 pt-6 text-xs text-muted-foreground">
           © {UPDATED.split(" ")[1]} Ledger.{" "}
+          <Link href="/terms" className="underline-offset-4 hover:underline">
+            Terms
+          </Link>{" "}
+          ·{" "}
           <Link href="/" className="underline-offset-4 hover:underline">
             Sign in
           </Link>

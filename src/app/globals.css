@@ -236,6 +236,16 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Landing ledger-tape marquee — runs on the compositor (off the main thread). */
+@keyframes ledger-marquee-l {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@keyframes ledger-marquee-r {
+  from { transform: translateX(-50%); }
+  to { transform: translateX(0); }
+}
+
 /* Privacy / screenshot mode — blur every figure (amounts, balances, totals). */
 .privacy .num,
 .privacy .amount-lg {

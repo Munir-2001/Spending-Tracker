@@ -11,6 +11,7 @@ import { SpendingCategories } from "@/components/dashboard/spending-categories";
 import { RecentTransactions } from "@/components/dashboard/recent-transactions";
 import { AccountsOverview } from "@/components/dashboard/accounts-overview";
 import { UpcomingBills } from "@/components/dashboard/upcoming-bills";
+import { getCurrentUser } from "@/server/actions";
 
 function greeting() {
   const h = new Date().getHours();
@@ -19,16 +20,22 @@ function greeting() {
   return "Good evening";
 }
 
-export default function DashboardPage() {
+export default async function DashboardPage() {
+  const user = await getCurrentUser();
+  const firstName = user?.name?.split(" ")[0] || "there";
+  const monthName = new Date().toLocaleString("en-US", { month: "long" });
+
   return (
     <div className="mx-auto max-w-6xl px-5 py-10 md:px-8 md:py-14">
       {/* Page header */}
       <Reveal>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-sm text-muted-foreground">{greeting()}, Munir</p>
+            <p className="text-sm text-muted-foreground">
+              {greeting()}, {firstName}
+            </p>
             <h1 className="display mt-1.5 text-3xl tracking-tight md:text-4xl">
-              June overview
+              {monthName} overview
             </h1>
           </div>
           <Button
@@ -54,7 +61,7 @@ export default function DashboardPage() {
           </span>
           <div className="min-w-0 flex-1">
             <p className="display text-lg leading-tight">
-              Your {new Date().toLocaleString("en-US", { month: "long" })}, wrapped
+              Your {monthName}, wrapped
             </p>
             <p className="truncate text-sm text-[#171207]/70">
               Your month in money — the habits, the splurges, the wins.

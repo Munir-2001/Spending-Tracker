@@ -254,3 +254,12 @@
   pointer-events: none;
   transition: filter 0.15s ease;
 }
+
+/* Chart axes reveal amounts too, but recharts renders them as its own SVG <text>
+   outside the .num blur. Recharts v3 has no per-axis class, so blur every axis
+   tick label (the value axis is what matters; date labels blur along with it). */
+.privacy .recharts-cartesian-axis-tick-value,
+.privacy .recharts-cartesian-axis-tick-value tspan {
+  filter: blur(6px);
+  transition: filter 0.15s ease;
+}

@@ -291,12 +291,16 @@ export function netWorthSeriesBase(
   }
   const heldAssets = assetsBase(assets, fx);
 
+  const pad = (n: number) => String(n).padStart(2, "0");
   const points: NetWorthPoint[] = [];
   for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(anchor.getFullYear(), anchor.getMonth() - i, 1);
-    const cutoff = new Date(d.getFullYear(), d.getMonth() + 1, 1)
-      .toISOString()
-      .slice(0, 10);
+    const dt = new Date(anchor.getFullYear(), anchor.getMonth() - i, 1);
+    const y = dt.getFullYear();
+    const m = dt.getMonth(); // 0-based
+    // First day of the NEXT month (Date normalizes Dec→Jan), built from parts so
+    // it never round-trips through UTC and shifts across a month boundary.
+    const nx = new Date(y, m + 1, 1);
+    const cutoff = `${nx.getFullYear()}-${pad(nx.getMonth() + 1)}-01`;
     let total = heldAssets;
     for (const a of leaves) {
       let bal = a.openingBalance;
@@ -304,7 +308,9 @@ export function netWorthSeriesBase(
         if (t.date < cutoff) bal += fx.convert(t.amount, t.currency, a.currency);
       total += fx.toBase(bal, a.currency);
     }
-    points.push({ month: d.toISOString().slice(0, 10), value: total });
+    // Label at mid-month ("-15") so a ±timezone offset can't roll it into the
+    // previous month when formatMonth parses it.
+    points.push({ month: `${y}-${pad(m + 1)}-15`, value: total });
   }
   return points;
 }
@@ -563,12 +569,14 @@ export function monthlyCashflowBase(
   fx: Fx,
   months = 6
 ): CashflowPoint[] {
+  const pad = (n: number) => String(n).padStart(2, "0");
   const points: CashflowPoint[] = [];
   for (let i = months - 1; i >= 0; i--) {
-    const d = new Date(anchor.getFullYear(), anchor.getMonth() - i, 1);
-    const flows = monthFlowsBase(transactions, d.getFullYear(), d.getMonth(), fx);
+    const dt = new Date(anchor.getFullYear(), anchor.getMonth() - i, 1);
+    const flows = monthFlowsBase(transactions, dt.getFullYear(), dt.getMonth(), fx);
+    // Mid-month label so a ±timezone offset can't shift it a month back.
     points.push({
-      month: d.toISOString().slice(0, 10),
+      month: `${dt.getFullYear()}-${pad(dt.getMonth() + 1)}-15`,
       income: flows.income,
       expense: Math.abs(flows.expense),
     });

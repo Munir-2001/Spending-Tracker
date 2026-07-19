@@ -34,8 +34,10 @@ export function Landing() {
   const reduce = useReducedMotion();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [full, setFull] = useState(false);
 
-  // Surface a failed OAuth round-trip (the callback redirects here with ?error).
+  // Surface a failed OAuth round-trip (?error) or a signup rejected because we're
+  // at the 100-user cap (?full), and pre-emptively show the cap to new visitors.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("error")) {
@@ -43,6 +45,22 @@ export function Landing() {
       setError("It may have timed out or been cancelled — please try again.");
       window.history.replaceState({}, "", window.location.pathname);
     }
+    if (params.get("full")) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setFull(true);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+    // Ask the DB whether signups are still open (SECURITY DEFINER, boolean only).
+    createClient()
+      .rpc("signups_open")
+      .then(
+        ({ data }) => {
+          if (data === false) setFull(true);
+        },
+        () => {
+          /* non-fatal — the DB trigger still enforces the cap regardless */
+        }
+      );
   }, []);
 
   async function signIn() {
@@ -261,6 +279,15 @@ export function Landing() {
           disabled: loading,
         }}
         onDismiss={() => setError(null)}
+      />
+
+      {/* At-capacity notice (100-member cap reached) */}
+      <Notice
+        open={full && !error}
+        tone="warning"
+        title="We've reached capacity"
+        message="Ledger is capped at 100 members and we're full for now. New signups are paused — existing members can still sign in."
+        onDismiss={() => setFull(false)}
       />
     </div>
   );

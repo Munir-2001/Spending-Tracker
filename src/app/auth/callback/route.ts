@@ -34,6 +34,13 @@ export async function GET(request: Request) {
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`);
     }
+    // A NEW signup is rejected by the DB trigger once we're at the user cap.
+    // Distinguish that (so the landing can say "we're full") from a generic
+    // auth failure by asking whether signups are still open.
+    const { data: open } = await supabase.rpc("signups_open");
+    if (open === false) {
+      return NextResponse.redirect(`${origin}/?full=1`);
+    }
   }
 
   return NextResponse.redirect(`${origin}/?error=auth`);

@@ -30,6 +30,8 @@ import {
   toMajorUnits,
   toMinorUnits,
 } from "@/lib/currency";
+import { COINS, coinById } from "@/lib/coins";
+import { cn } from "@/lib/utils";
 
 export const ASSET_TYPES: { value: AssetType; label: string }[] = [
   { value: "property", label: "Property / real estate" },
@@ -74,9 +76,12 @@ export function AssetDialog({
   const [commission, setCommission] = useState("");
   const [tax, setTax] = useState("");
   const [lotDate, setLotDate] = useState("");
+  const [coinId, setCoinId] = useState("");
+  const [coinSearch, setCoinSearch] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const isGold = type === "gold";
+  const isCrypto = type === "crypto";
 
   useEffect(() => {
     if (!open) return;
@@ -95,6 +100,8 @@ export function AssetDialog({
       setCommission("");
       setTax("");
       setLotDate(todayIso());
+      setCoinId(editing.type === "crypto" ? editing.symbol ?? "" : "");
+      setCoinSearch("");
     } else {
       setName("");
       setType("property");
@@ -107,6 +114,8 @@ export function AssetDialog({
       setCommission("");
       setTax("");
       setLotDate(todayIso());
+      setCoinId("");
+      setCoinSearch("");
     }
   }, [open, editing]);
 
@@ -173,6 +182,62 @@ export function AssetDialog({
       return;
     }
 
+    if (isCrypto) {
+      // Editing = metadata only; preserve lot-derived aggregates.
+      if (editing) {
+        onSave(editing.id, {
+          name: name.trim(),
+          type,
+          value: editing.value,
+          currency: editing.currency,
+          note: note.trim() || null,
+          symbol: editing.symbol,
+          quantity: editing.quantity,
+          unit: null,
+          karat: null,
+          costBasis: editing.costBasis,
+        });
+        toast.success("Crypto updated", { description: name.trim() });
+        onOpenChange(false);
+        return;
+      }
+
+      const coin = coinById(coinId);
+      if (!coin) return toast.error("Pick a coin.");
+      const qty = Number.parseFloat(quantity);
+      if (!Number.isFinite(qty) || qty <= 0)
+        return toast.error(`Enter how many ${coin.symbol} you hold.`);
+      const cc = Number.parseFloat(goldPrice);
+      if (!Number.isFinite(cc) || cc < 0)
+        return toast.error("Enter what you paid for the coins.");
+      const cm = Number.parseFloat(commission) || 0;
+      const tx = Number.parseFloat(tax) || 0;
+      const coinCostMinor = toMinorUnits(cc, currency);
+      const feeMinor = toMinorUnits(cm, currency);
+      const taxMinor = toMinorUnits(tx, currency);
+      const costMinor = coinCostMinor + feeMinor + taxMinor;
+      onCreate({
+        name: name.trim(),
+        type,
+        value: costMinor,
+        currency,
+        note: note.trim() || null,
+        symbol: coinId,
+        quantity: qty,
+        karat: null,
+        costBasis: costMinor,
+        firstLot: {
+          date: lotDate || todayIso(),
+          goldCost: coinCostMinor,
+          commission: feeMinor,
+          tax: taxMinor,
+        },
+      });
+      toast.success("Crypto added", { description: "Prices refresh automatically." });
+      onOpenChange(false);
+      return;
+    }
+
     const major = Number.parseFloat(value);
     if (!Number.isFinite(major) || major < 0)
       return toast.error("Enter a value.");
@@ -209,6 +274,15 @@ export function AssetDialog({
   const sym = currencyInfo(currency).symbol;
   const qtyNum = Number.parseFloat(quantity) || 0;
   const ratePerTola = qtyNum > 0 && gpNum > 0 ? gpNum / qtyNum : 0;
+  const selectedCoin = coinById(coinId);
+  const coinSearchQ = coinSearch.trim().toLowerCase();
+  const filteredCoins = coinSearchQ
+    ? COINS.filter(
+        (c) =>
+          c.name.toLowerCase().includes(coinSearchQ) ||
+          c.symbol.toLowerCase().includes(coinSearchQ)
+      )
+    : COINS;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -422,6 +496,165 @@ export function AssetDialog({
                       <p className="text-[11px] text-muted-foreground">
                         Making charge: {makingPct.toFixed(1)}% over metal. Current value
                         updates from the live gold price — we&apos;ll show your profit/loss.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+            </>
+          ) : isCrypto ? (
+            <>
+              <div className="space-y-1.5">
+                <Label>Coin</Label>
+                <Input
+                  placeholder="Search coin…"
+                  value={coinSearch}
+                  onChange={(e) => setCoinSearch(e.target.value)}
+                />
+                <div className="max-h-36 overflow-y-auto rounded-lg border border-border/60">
+                  {filteredCoins.length === 0 ? (
+                    <p className="px-3 py-2 text-xs text-muted-foreground">No coins match.</p>
+                  ) : (
+                    filteredCoins.map((c) => (
+                      <button
+                        type="button"
+                        key={c.id}
+                        onClick={() => {
+                          setCoinId(c.id);
+                          if (!name.trim()) setName(c.name);
+                        }}
+                        className={cn(
+                          "flex w-full items-center justify-between px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50",
+                          coinId === c.id && "bg-primary/10 font-medium text-foreground"
+                        )}
+                      >
+                        <span>{c.name}</span>
+                        <span className="num text-xs text-muted-foreground">{c.symbol}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {isEditing ? (
+                <p className="rounded-md bg-muted/50 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                  Cost basis and purchases are managed as lots — use “Add purchase” on
+                  the assets page to record another buy.
+                </p>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="crypto-qty">
+                        Quantity{selectedCoin ? ` (${selectedCoin.symbol})` : ""}
+                      </Label>
+                      <Input
+                        id="crypto-qty"
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        min="0"
+                        value={quantity}
+                        onChange={(e) => setQuantity(e.target.value)}
+                        placeholder="e.g. 0.5"
+                        className="num"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="crypto-date">Purchase date</Label>
+                      <Input
+                        id="crypto-date"
+                        type="date"
+                        value={lotDate}
+                        max={todayIso()}
+                        onChange={(e) => setLotDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 rounded-lg border border-border/60 p-3">
+                    <p className="text-xs font-medium">What you paid ({currency})</p>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="crypto-cost" className="text-xs text-muted-foreground">
+                        Coin cost
+                      </Label>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                          {sym}
+                        </span>
+                        <Input
+                          id="crypto-cost"
+                          type="number"
+                          inputMode="decimal"
+                          step="any"
+                          min="0"
+                          value={goldPrice}
+                          onChange={(e) => setGoldPrice(e.target.value)}
+                          placeholder="0"
+                          className="num pl-7"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="crypto-fee" className="text-xs text-muted-foreground">
+                          Exchange fee
+                        </Label>
+                        <div className="relative">
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                            {sym}
+                          </span>
+                          <Input
+                            id="crypto-fee"
+                            type="number"
+                            inputMode="decimal"
+                            step="any"
+                            min="0"
+                            value={commission}
+                            onChange={(e) => setCommission(e.target.value)}
+                            placeholder="0"
+                            className="num pl-7"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="crypto-tax" className="text-xs text-muted-foreground">
+                          Tax (optional)
+                        </Label>
+                        <div className="relative">
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                            {sym}
+                          </span>
+                          <Input
+                            id="crypto-tax"
+                            type="number"
+                            inputMode="decimal"
+                            step="any"
+                            min="0"
+                            value={tax}
+                            onChange={(e) => setTax(e.target.value)}
+                            placeholder="0"
+                            className="num pl-7"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-baseline justify-between border-t border-border/60 pt-2">
+                      <span className="text-xs text-muted-foreground">Total cost basis</span>
+                      <span className="num text-sm font-semibold">
+                        {sym}
+                        {totalCost.toLocaleString(undefined, {
+                          maximumFractionDigits: currencyInfo(currency).decimals,
+                        })}
+                      </span>
+                    </div>
+                    {qtyNum > 0 && gpNum > 0 && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Avg price: {sym}
+                        {(gpNum / qtyNum).toLocaleString(undefined, {
+                          maximumFractionDigits: 2,
+                        })}{" "}
+                        / {selectedCoin?.symbol ?? "coin"}. Value updates from the live price.
                       </p>
                     )}
                   </div>

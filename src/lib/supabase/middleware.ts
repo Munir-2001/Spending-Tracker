@@ -7,10 +7,19 @@ import { SUPABASE_CONFIGURED } from "@/lib/supabase/config";
  * unauthenticated users are sent to the landing (/), signed-in users to /dashboard.
  * In local mode (no Supabase keys) auth is skipped entirely.
  */
-export async function updateSession(request: NextRequest) {
-  if (!SUPABASE_CONFIGURED) return NextResponse.next({ request });
+export async function updateSession(
+  request: NextRequest,
+  requestHeaders?: Headers
+) {
+  // When the proxy passes nonce/CSP request headers, forward them to the render
+  // so Next can attach the nonce to its scripts.
+  const nextArg = requestHeaders
+    ? { request: { headers: requestHeaders } }
+    : { request };
 
-  let response = NextResponse.next({ request });
+  if (!SUPABASE_CONFIGURED) return NextResponse.next(nextArg);
+
+  let response = NextResponse.next(nextArg);
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -24,7 +33,7 @@ export async function updateSession(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value)
           );
-          response = NextResponse.next({ request });
+          response = NextResponse.next(nextArg);
           cookiesToSet.forEach(({ name, value, options }) =>
             response.cookies.set(name, value, options)
           );

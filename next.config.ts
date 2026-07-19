@@ -26,6 +26,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Don't ship readable source maps to the browser in production (this is the
+  // default, but set it explicitly so a config change can't silently expose it).
+  productionBrowserSourceMaps: false,
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

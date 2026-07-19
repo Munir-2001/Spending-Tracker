@@ -81,7 +81,7 @@ export function assetsBase(assets: Asset[], fx: Fx): number {
 
 /** Weighted-average cost per gram across lots, in minor units of their currency. */
 export function weightedAvgCostPerGram(lots: AssetLot[]): number {
-  const grams = lots.reduce((s, l) => s + gramsOf(l.quantity, l.unit), 0);
+  const grams = lots.reduce((s, l) => s + gramsOf(l.quantity, l.unit ?? "tola"), 0);
   if (!grams) return 0;
   const cost = lots.reduce((s, l) => s + l.costBasis, 0);
   return cost / grams;
@@ -96,7 +96,7 @@ export function lotPL(
   gramPrice: number
 ): { value: number; pl: number; plPct: number | null } {
   const value = toMinorUnits(
-    goldValueMajor(lot.quantity, lot.unit, lot.karat, gramPrice),
+    goldValueMajor(lot.quantity, lot.unit ?? "tola", lot.karat, gramPrice),
     lot.currency
   );
   const pl = value - lot.costBasis;
@@ -138,7 +138,7 @@ export function goldPL(
   let usdValue: number;
   if (usdGram != null && lots.length > 0) {
     usdValue = lots.reduce(
-      (s, l) => s + toMinorUnits(goldValueMajor(l.quantity, l.unit, l.karat, usdGram), "USD"),
+      (s, l) => s + toMinorUnits(goldValueMajor(l.quantity, l.unit ?? "tola", l.karat, usdGram), "USD"),
       0
     );
   } else if (usdGram != null && asset.quantity != null && asset.unit) {
@@ -172,6 +172,58 @@ export function goldPL(
     usd: side(usdValue, usdCost),
     makingChargePct: makingChargePct(commission, tax, goldCost),
     avgCostPerGram: weightedAvgCostPerGram(lots),
+  };
+}
+
+// ── Crypto cost-basis & P/L ──────────────────────────────────────────────────
+
+/** P/L of a single crypto lot given the current coin price in the lot's currency. */
+export function cryptoLotPL(
+  lot: AssetLot,
+  coinPrice: number
+): { value: number; pl: number; plPct: number | null } {
+  const value = toMinorUnits(lot.quantity * coinPrice, lot.currency);
+  const pl = value - lot.costBasis;
+  return { value, pl, plPct: lot.costBasis ? (pl / lot.costBasis) * 100 : null };
+}
+
+export type CryptoPL = {
+  native: PLSide;
+  usd: PLSide;
+  feePct: number; // exchange/network fees as a % of coin cost
+  avgCostPerUnit: number; // minor units of native currency per coin
+};
+
+/**
+ * Dual-currency P/L for a crypto holding. Same shape as {@link goldPL} but the
+ * value is `quantity × price` (no grams/karat). USD cost is pinned at each lot's
+ * purchase FX rate so USD P/L reflects coin movement, not currency drift.
+ */
+export function cryptoPL(asset: Asset, lots: AssetLot[], fx: Fx): CryptoPL {
+  const nativeCost = asset.costBasis ?? 0;
+  const usdValue = fx.convert(asset.value, asset.currency, "USD");
+  const usdCost =
+    lots.length > 0
+      ? lots.reduce(
+          (s, l) =>
+            s +
+            (l.purchaseFxRate != null
+              ? toMinorUnits(toMajorUnits(l.costBasis, l.currency) * l.purchaseFxRate, "USD")
+              : fx.convert(l.costBasis, l.currency, "USD")),
+          0
+        )
+      : fx.convert(nativeCost, asset.currency, "USD");
+
+  const coinCost = lots.reduce((s, l) => s + l.goldCost, 0);
+  const commission = lots.reduce((s, l) => s + l.commission, 0);
+  const tax = lots.reduce((s, l) => s + l.tax, 0);
+  const totalQty = lots.reduce((s, l) => s + l.quantity, 0);
+
+  return {
+    native: side(asset.value, nativeCost),
+    usd: side(usdValue, usdCost),
+    feePct: makingChargePct(commission, tax, coinCost),
+    avgCostPerUnit: totalQty ? nativeCost / totalQty : 0,
   };
 }
 

@@ -65,10 +65,15 @@ export async function insert<T extends TableName>(
 export async function update<T extends TableName>(
   table: T,
   id: string,
-  patch: Partial<TableMap[T]>
+  patch: Partial<TableMap[T]>,
+  ownerId?: string
 ): Promise<TableMap[T] | null> {
   const rows = await selectAll(table);
-  const idx = rows.findIndex((r) => (r as { id: string }).id === id);
+  const idx = rows.findIndex(
+    (r) =>
+      (r as { id: string }).id === id &&
+      (!ownerId || (r as { user_id?: string }).user_id === ownerId)
+  );
   if (idx === -1) return null;
   rows[idx] = { ...rows[idx], ...patch };
   await writeJson(fileFor(table), rows);
@@ -77,10 +82,15 @@ export async function update<T extends TableName>(
 
 export async function remove<T extends TableName>(
   table: T,
-  id: string
+  id: string,
+  ownerId?: string
 ): Promise<boolean> {
   const rows = await selectAll(table);
-  const next = rows.filter((r) => (r as { id: string }).id !== id);
+  const next = rows.filter(
+    (r) =>
+      (r as { id: string }).id !== id ||
+      (!!ownerId && (r as { user_id?: string }).user_id !== ownerId)
+  );
   if (next.length === rows.length) return false;
   await writeJson(fileFor(table), next);
   return true;

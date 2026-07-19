@@ -3,11 +3,24 @@ import { redirect } from "next/navigation";
 
 import { Landing } from "@/components/landing/landing";
 import { SUPABASE_CONFIGURED } from "@/lib/supabase/config";
+import { SITE_NAME, SITE_DESCRIPTION, SITE_URL } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "Ledger — Money, kept honest.",
-  description:
-    "An accounting-grade personal finance tracker. Double-entry rigor underneath, encrypted and multi-currency, beautifully simple on top.",
+  title: `${SITE_NAME} \u2014 Money, kept honest.`,
+  description: SITE_DESCRIPTION,
+  alternates: { canonical: "/" },
+};
+
+// Structured data so search + AI surfaces understand what the app is.
+const jsonLd = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: SITE_NAME,
+  applicationCategory: "FinanceApplication",
+  operatingSystem: "Web",
+  url: SITE_URL,
+  description: SITE_DESCRIPTION,
+  offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
 };
 
 export default function HomePage() {
@@ -15,5 +28,13 @@ export default function HomePage() {
   // In hosted mode, signed-in users are bounced to /dashboard by middleware;
   // everyone else sees the landing.
   if (!SUPABASE_CONFIGURED) redirect("/dashboard");
-  return <Landing />;
+  return (
+    <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+      <Landing />
+    </>
+  );
 }

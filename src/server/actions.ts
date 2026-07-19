@@ -1,6 +1,7 @@
 "use server";
 
 import { randomUUID } from "node:crypto";
+import { cache } from "react";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
@@ -15,6 +16,8 @@ import {
   type AssetRow,
   type AssetLotRow,
   type NewAssetLotInput,
+  type FeedbackRow,
+  type NewFeedbackInput,
   type BudgetRow,
   type CategoryRow,
   type GoalRow,
@@ -30,6 +33,8 @@ import {
   type TransactionLineRow,
   type TransactionRow,
   type UserSettingsRow,
+  type TableMap,
+  type TableName,
 } from "@/lib/schema";
 import type {
   Account,
@@ -37,6 +42,7 @@ import type {
   AssetLot,
   Budget,
   Category,
+  Feedback,
   Goal,
   RecurringRule,
   Transaction,
@@ -44,10 +50,14 @@ import type {
 } from "@/lib/data";
 import { DEFAULT_BASE_CURRENCY, DEFAULT_RATES, toMinorUnits } from "@/lib/currency";
 import { goldValueMajor, gramsOf, GRAMS_PER_UNIT } from "@/lib/gold";
-import { getUsdGoldQuote } from "@/server/prices";
+import { getUsdGoldQuote, getCryptoPricesUsd, getFxRatesUsd } from "@/server/prices";
 
-/** The current authenticated user's id (or the demo user in local mode). */
-async function getUserId(): Promise<string> {
+/**
+ * The current authenticated user's id (or the demo user in local mode).
+ * Memoized per-request so the ownership-scoped wrappers below can call it freely
+ * without repeated session lookups.
+ */
+const getUserId = cache(async (): Promise<string> => {
   if (!SUPABASE_CONFIGURED) return DEMO_USER_ID;
   const supabase = await createClient();
   const {
@@ -55,6 +65,24 @@ async function getUserId(): Promise<string> {
   } = await supabase.auth.getUser();
   if (!user) throw new Error("Not authenticated");
   return user.id;
+});
+
+/**
+ * Update/delete a row scoped to the current user. This re-verifies ownership in
+ * the data layer — the query itself carries `user_id = auth user` — so a server
+ * action can never mutate another user's row, independent of RLS or any
+ * middleware check. Every id-based mutation on a user-owned table goes through
+ * these; only parent-scoped child tables (transaction_lines) use raw db calls.
+ */
+async function updateOwned<T extends TableName>(
+  table: T,
+  id: string,
+  patch: Partial<TableMap[T]>
+): Promise<TableMap[T] | null> {
+  return db.update(table, id, patch, await getUserId());
+}
+async function removeOwned<T extends TableName>(table: T, id: string): Promise<boolean> {
+  return db.remove(table, id, await getUserId());
 }
 
 /** Name + email of the signed-in user, for the sidebar. */
@@ -236,9 +264,9 @@ export async function createAsset(raw: NewAssetInput): Promise<Asset> {
     updated_at: now,
   };
   await db.insert("assets", row);
-  // For a gold holding, record the opening purchase as its first lot so the
-  // asset never exists without a lot backing its cost basis.
-  if (input.symbol === "XAU" && input.firstLot && input.quantity && input.unit) {
+  // For a market-priced holding (gold or crypto), record the opening purchase as
+  // its first lot so the asset never exists without a lot backing its cost basis.
+  if (input.symbol && input.firstLot && input.quantity) {
     const { rates } = await getSettings();
     const fl = input.firstLot;
     const lot: AssetLotRow = {
@@ -248,7 +276,7 @@ export async function createAsset(raw: NewAssetInput): Promise<Asset> {
       asset_id: row.id,
       date: fl.date,
       quantity: input.quantity,
-      unit: input.unit,
+      unit: input.unit ?? null,
       karat: input.karat ?? null,
       gold_cost: fl.goldCost,
       commission: fl.commission,
@@ -272,7 +300,7 @@ export async function updateAsset(
 ): Promise<Asset | null> {
   const input = v.assetInput.parse(raw) as NewAssetInput;
   v.idInput.parse(id);
-  const updated = await db.update("assets", id, {
+  const updated = await updateOwned("assets", id, {
     name: enc(input.name)!,
     type: input.type,
     value: input.value,
@@ -287,7 +315,7 @@ export async function updateAsset(
 
 export async function deleteAsset(id: string): Promise<void> {
   v.idInput.parse(id);
-  await db.remove("assets", id);
+  await removeOwned("assets", id);
   revalidateAssetViews();
 }
 
@@ -310,49 +338,70 @@ export async function refreshGoldPrices(force = false): Promise<{
   usdGram: number | null;
 }> {
   const rows = await db.selectAll("assets");
-  const gold = rows.filter(
-    (r) => r.symbol === "XAU" && r.quantity && r.quantity > 0 && r.unit
+  const gold = rows.filter((r) => r.symbol === "XAU" && r.quantity && r.quantity > 0);
+  const crypto = rows.filter(
+    (r) => r.type === "crypto" && r.symbol && r.symbol !== "XAU" && r.quantity && r.quantity > 0
   );
-  if (gold.length === 0)
-    return { assets: rows.map(assetToUi), pricedAt: null, live: false, usdGram: null };
-
-  const usd = await getUsdGoldQuote(force);
-  // No key / offline / bad response → keep last-known values.
-  if (!usd)
+  if (gold.length === 0 && crypto.length === 0)
     return { assets: rows.map(assetToUi), pricedAt: null, live: false, usdGram: null };
 
   const { rates } = await getSettings();
   const usdRate = rates.USD ?? 1;
-
-  // Load all lots once, grouped by asset, so mixed-karat holdings value right.
-  const allLots = await db.selectAll("asset_lots");
-  const lotsByAsset = new Map<string, AssetLotRow[]>();
-  for (const l of allLots) {
-    const arr = lotsByAsset.get(l.asset_id) ?? [];
-    arr.push(l);
-    lotsByAsset.set(l.asset_id, arr);
-  }
-
   const now = new Date().toISOString();
-  for (const r of gold) {
-    // USD spot → per-gram 24k price in the asset's own currency (via the
-    // numeraire, same math as convertWithRates applied to a per-gram amount).
-    const gramPrice = (usd.gram24k * usdRate) / (rates[r.currency] ?? 1);
-    const lots = lotsByAsset.get(r.id) ?? [];
-    let major = 0;
-    if (lots.length > 0) {
-      for (const l of lots) major += goldValueMajor(l.quantity, l.unit, l.karat, gramPrice);
-    } else {
-      major = goldValueMajor(r.quantity!, r.unit!, r.karat, gramPrice);
+  let pricedAt: string | null = null;
+  let live = false;
+  let usdGram: number | null = null;
+
+  // ── Gold: international spot × grams × purity, per lot (mixed-karat safe) ──
+  if (gold.length > 0) {
+    const usd = await getUsdGoldQuote(force);
+    if (usd) {
+      usdGram = usd.gram24k;
+      pricedAt = usd.at;
+      // Fetched within the last minute ⇒ this call hit the API (not just cache).
+      if (Date.now() - Date.parse(usd.at) < 60_000) live = true;
+      const allLots = await db.selectAll("asset_lots");
+      const lotsByAsset = new Map<string, AssetLotRow[]>();
+      for (const l of allLots) {
+        const arr = lotsByAsset.get(l.asset_id) ?? [];
+        arr.push(l);
+        lotsByAsset.set(l.asset_id, arr);
+      }
+      for (const r of gold) {
+        const gramPrice = (usd.gram24k * usdRate) / (rates[r.currency] ?? 1);
+        const lots = lotsByAsset.get(r.id) ?? [];
+        let major = 0;
+        if (lots.length > 0)
+          for (const l of lots)
+            major += goldValueMajor(l.quantity, l.unit ?? "tola", l.karat, gramPrice);
+        else major = goldValueMajor(r.quantity!, r.unit ?? "tola", r.karat, gramPrice);
+        await updateOwned("assets", r.id, { value: toMinorUnits(major, r.currency), updated_at: now });
+      }
     }
-    await db.update("assets", r.id, { value: toMinorUnits(major, r.currency), updated_at: now });
   }
 
-  // Fetched within the last minute ⇒ this call hit the API (not just cache).
-  const live = Date.now() - Date.parse(usd.at) < 60_000;
+  // ── Crypto: live coin price × quantity, converted to the asset's currency ──
+  if (crypto.length > 0) {
+    const ids = [...new Set(crypto.map((r) => r.symbol!))];
+    const prices = await getCryptoPricesUsd(ids, force);
+    if (Object.keys(prices).length > 0) {
+      if (!pricedAt) pricedAt = now;
+      if (force) live = true; // an explicit refresh bypassed the cache
+      for (const r of crypto) {
+        const coinUsd = prices[r.symbol!];
+        if (coinUsd == null) continue;
+        const coinPrice = (coinUsd * usdRate) / (rates[r.currency] ?? 1);
+        await updateOwned("assets", r.id, {
+          value: toMinorUnits(r.quantity! * coinPrice, r.currency),
+          updated_at: now,
+        });
+      }
+    }
+  }
+
   revalidateAssetViews();
   const updated = await db.selectAll("assets");
-  return { assets: updated.map(assetToUi), pricedAt: usd.at, live, usdGram: usd.gram24k };
+  return { assets: updated.map(assetToUi), pricedAt, live, usdGram };
 }
 
 // ── Asset lots (per-purchase gold) ───────────────────────────────────────────
@@ -428,24 +477,42 @@ export async function listLots(assetId: string): Promise<AssetLot[]> {
 }
 
 /**
- * Recompute a gold asset's aggregate quantity + cost basis from its lots. Sums
- * quantity in grams (never across raw units) and stores it back as tola; carries
- * the most-recent lot's karat as representative. `value` is set to cost basis as
- * a provisional floor — the live-price refresh overwrites it.
+ * Recompute a market asset's aggregate quantity + cost basis from its lots.
+ * Gold sums quantity in grams (never across raw units) and stores it as tola
+ * with the most-recent lot's karat; crypto sums the raw coin quantity. `value`
+ * is set to cost basis as a provisional floor — the live-price refresh overwrites.
  */
 async function recomputeAssetFromLots(assetId: string): Promise<void> {
-  const lots = await db.selectWhere("asset_lots", { asset_id: assetId });
+  const [lots, asset] = await Promise.all([
+    db.selectWhere("asset_lots", { asset_id: assetId }),
+    db.findById("assets", assetId),
+  ]);
   const now = new Date().toISOString();
   if (lots.length === 0) {
-    await db.update("assets", assetId, { quantity: 0, cost_basis: 0, updated_at: now });
+    await updateOwned("assets", assetId, { quantity: 0, cost_basis: 0, updated_at: now });
     return;
   }
-  const totalGrams = lots.reduce((s, l) => s + gramsOf(l.quantity, l.unit), 0);
   const costBasis = lots.reduce((s, l) => s + l.cost_basis, 0);
+
+  if (asset?.type === "crypto") {
+    const quantity = lots.reduce((s, l) => s + l.quantity, 0);
+    await updateOwned("assets", assetId, {
+      quantity,
+      unit: null,
+      karat: null,
+      cost_basis: costBasis,
+      value: costBasis,
+      updated_at: now,
+    });
+    return;
+  }
+
+  // Gold: sum in grams, store back as tola; carry the latest lot's karat.
+  const totalGrams = lots.reduce((s, l) => s + gramsOf(l.quantity, l.unit ?? "tola"), 0);
   const latest = [...lots].sort((a, b) =>
     a.date < b.date ? 1 : a.date > b.date ? -1 : a.created_at < b.created_at ? 1 : -1
   )[0];
-  await db.update("assets", assetId, {
+  await updateOwned("assets", assetId, {
     quantity: totalGrams / GRAMS_PER_UNIT.tola,
     unit: "tola",
     karat: latest.karat ?? null,
@@ -496,7 +563,7 @@ export async function updateAssetLot(
 ): Promise<AssetLot | null> {
   const input = v.assetLotInput.parse(raw) as NewAssetLotInput;
   v.idInput.parse(id);
-  const updated = await db.update("asset_lots", id, {
+  const updated = await updateOwned("asset_lots", id, {
     date: input.date,
     quantity: input.quantity,
     unit: input.unit,
@@ -517,7 +584,7 @@ export async function updateAssetLot(
 export async function deleteAssetLot(id: string): Promise<void> {
   v.idInput.parse(id);
   const existing = await db.findById("asset_lots", id);
-  await db.remove("asset_lots", id);
+  await removeOwned("asset_lots", id);
   if (existing) await recomputeAssetFromLots(existing.asset_id);
   revalidateAssetViews();
 }
@@ -555,7 +622,7 @@ export async function updateCategory(
 ): Promise<Category | null> {
   const input = v.categoryInput.parse(raw) as NewCategoryInput;
   v.idInput.parse(id);
-  const updated = await db.update("categories", id, {
+  const updated = await updateOwned("categories", id, {
     name: input.name,
     kind: input.kind,
     color: input.color,
@@ -575,7 +642,7 @@ export async function deleteCategory(id: string): Promise<void> {
   const txns = (
     await db.selectAll("transactions")
   ).filter((t) => t.category_id === id);
-  for (const t of txns) await db.update("transactions", t.id, { category_id: null });
+  for (const t of txns) await updateOwned("transactions", t.id, { category_id: null });
 
   const lines = (await db.selectAll("transaction_lines")).filter(
     (l) => l.category_id === id
@@ -583,13 +650,13 @@ export async function deleteCategory(id: string): Promise<void> {
   for (const l of lines) await db.update("transaction_lines", l.id, { category_id: null });
 
   const budgets = await db.selectWhere("budgets", { category_id: id });
-  for (const b of budgets) await db.remove("budgets", b.id);
+  for (const b of budgets) await removeOwned("budgets", b.id);
 
   // Promote any sub-categories to top-level rather than orphaning them.
   const children = await db.selectWhere("categories", { parent_id: id });
-  for (const c of children) await db.update("categories", c.id, { parent_id: null });
+  for (const c of children) await updateOwned("categories", c.id, { parent_id: null });
 
-  await db.remove("categories", id);
+  await removeOwned("categories", id);
   revalidateCategoryViews();
 }
 
@@ -658,7 +725,7 @@ export async function updateAccount(
     currency: input.currency,
     opening_balance: input.isGroup ? 0 : input.openingBalance,
   };
-  const updated = await db.update("accounts", id, patch);
+  const updated = await updateOwned("accounts", id, patch);
   revalidatePath("/");
   revalidatePath("/accounts");
   return updated ? accountToUi(updated) : null;
@@ -671,8 +738,8 @@ export async function updateAccount(
 export async function deleteAccount(id: string): Promise<void> {
   v.idInput.parse(id);
   const children = await db.selectWhere("accounts", { parent_id: id });
-  for (const child of children) await db.update("accounts", child.id, { parent_id: null });
-  await db.remove("accounts", id);
+  for (const child of children) await updateOwned("accounts", child.id, { parent_id: null });
+  await removeOwned("accounts", id);
   revalidatePath("/");
   revalidatePath("/accounts");
 }
@@ -755,7 +822,7 @@ export async function updateTransaction(
   for (const l of existing) await db.remove("transaction_lines", l.id);
   for (const l of lineRows) await db.insert("transaction_lines", l);
 
-  const updated = await db.update("transactions", id, {
+  const updated = await updateOwned("transactions", id, {
     account_id: input.accountId,
     category_id: split ? null : input.categoryId || null,
     date: input.date,
@@ -784,7 +851,7 @@ export async function settleReimbursement(
   if (!txn || !txn.reimburse_amount) return { updated: null, inflow: null };
   const now = new Date().toISOString();
 
-  const updated = await db.update("transactions", transactionId, {
+  const updated = await updateOwned("transactions", transactionId, {
     reimburse_settled: true,
     reimburse_settled_at: now,
   });
@@ -830,7 +897,7 @@ export async function recordRepayment(
   const claim = await db.findById("transactions", input.claimId);
   const now = new Date().toISOString();
 
-  const updated = await db.update("transactions", input.claimId, {
+  const updated = await updateOwned("transactions", input.claimId, {
     reimburse_settled: true,
     reimburse_settled_at: now,
   });
@@ -924,7 +991,7 @@ export async function recordTransfer(
     const asset = await db.findById("assets", input.toId);
     if (asset) {
       destLabel = dec(asset.name) ?? "asset";
-      const updated = await db.update("assets", input.toId, {
+      const updated = await updateOwned("assets", input.toId, {
         value: asset.value + Math.abs(input.toAmount),
         updated_at: now,
       });
@@ -990,7 +1057,7 @@ export async function deleteTransaction(id: string): Promise<void> {
   v.idInput.parse(id);
   const existing = await db.selectWhere("transaction_lines", { transaction_id: id });
   for (const l of existing) await db.remove("transaction_lines", l.id);
-  await db.remove("transactions", id);
+  await removeOwned("transactions", id);
   revalidateTxnViews();
 }
 
@@ -1093,23 +1160,84 @@ async function defaultBaseCurrency(): Promise<string> {
   return DEFAULT_BASE_CURRENCY;
 }
 
+// ── Feedback ────────────────────────────────────────────────────────────────
+function feedbackToUi(r: FeedbackRow): Feedback {
+  return {
+    id: r.id,
+    message: r.message, // stored plain so the owner can read it in the dashboard
+    rating: r.rating ?? null,
+    page: r.page ?? null,
+    createdAt: r.created_at,
+  };
+}
+
+export async function listFeedback(): Promise<Feedback[]> {
+  const rows = await db.selectAll("feedback");
+  return rows
+    .map(feedbackToUi)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function submitFeedback(raw: NewFeedbackInput): Promise<Feedback> {
+  const input = v.feedbackInput.parse(raw) as NewFeedbackInput;
+  const userId = await getUserId();
+  const row: FeedbackRow = {
+    id: randomUUID(),
+    user_id: userId,
+    org_id: null,
+    rating: input.rating ?? null,
+    message: input.message,
+    page: input.page ?? null,
+    created_at: new Date().toISOString(),
+  };
+  await db.insert("feedback", row);
+  return feedbackToUi(row);
+}
+
+export async function updateFeedback(
+  id: string,
+  raw: NewFeedbackInput
+): Promise<Feedback | null> {
+  const input = v.feedbackInput.parse(raw) as NewFeedbackInput;
+  v.idInput.parse(id);
+  const updated = await updateOwned("feedback", id, {
+    message: input.message,
+    rating: input.rating ?? null,
+  });
+  return updated ? feedbackToUi(updated) : null;
+}
+
+export async function deleteFeedback(id: string): Promise<void> {
+  v.idInput.parse(id);
+  await removeOwned("feedback", id);
+}
+
 export async function getSettings(): Promise<AppSettings> {
+  // Live rates (cached ~12h) drive conversions; a stored override is a fallback
+  // under them, and the built-in defaults sit under that.
+  const live = await getFxRatesUsd();
   if (!SUPABASE_CONFIGURED) {
     const saved = await db.readSettings<Partial<AppSettings>>();
-    const rates = { ...DEFAULT_RATES, ...(saved?.rates ?? {}) };
+    const rates = { ...DEFAULT_RATES, ...(saved?.rates ?? {}), ...live };
     const baseCurrency = saved?.baseCurrency || (await defaultBaseCurrency());
     return { baseCurrency, rates, defaultAccountId: saved?.defaultAccountId ?? null };
   }
   const supabase = await createClient();
   const { data } = await supabase.from("user_settings").select("*").maybeSingle();
   const saved = data as UserSettingsRow | null;
-  const rates = { ...DEFAULT_RATES, ...(saved?.rates ?? {}) };
+  const rates = { ...DEFAULT_RATES, ...(saved?.rates ?? {}), ...live };
   const baseCurrency = saved?.base_currency || (await defaultBaseCurrency());
   return {
     baseCurrency,
     rates,
     defaultAccountId: saved?.default_account_id ?? null,
   };
+}
+
+/** Force a fresh pull of live FX rates (for the settings "Refresh rates" button). */
+export async function refreshRates(): Promise<Record<string, number>> {
+  const live = await getFxRatesUsd(true);
+  return { ...DEFAULT_RATES, ...live };
 }
 
 export async function updateSettings(raw: AppSettings): Promise<AppSettings> {
@@ -1168,13 +1296,13 @@ export async function setBudget(
   )[0];
 
   if (amount <= 0) {
-    if (existing) await db.remove("budgets", existing.id);
+    if (existing) await removeOwned("budgets", existing.id);
     revalidatePath("/budgets");
     return null;
   }
 
   if (existing) {
-    const updated = await db.update("budgets", existing.id, { amount });
+    const updated = await updateOwned("budgets", existing.id, { amount });
     revalidatePath("/budgets");
     return updated ? budgetToUi(updated) : null;
   }
@@ -1245,7 +1373,7 @@ export async function updateGoal(
 ): Promise<Goal | null> {
   const input = v.goalInput.parse(raw) as NewGoalInput;
   v.idInput.parse(id);
-  const updated = await db.update("goals", id, {
+  const updated = await updateOwned("goals", id, {
     name: input.name,
     target_amount: input.target,
     saved_amount: input.saved,
@@ -1268,7 +1396,7 @@ export async function contributeGoal(
   const goal = await db.findById("goals", id);
   if (!goal) return null;
   const saved = Math.max(0, goal.saved_amount + Math.trunc(delta));
-  const updated = await db.update("goals", id, {
+  const updated = await updateOwned("goals", id, {
     saved_amount: saved,
     updated_at: new Date().toISOString(),
   });
@@ -1278,7 +1406,7 @@ export async function contributeGoal(
 
 export async function deleteGoal(id: string): Promise<void> {
   v.idInput.parse(id);
-  await db.remove("goals", id);
+  await removeOwned("goals", id);
   revalidateGoalViews();
 }
 
@@ -1378,7 +1506,7 @@ export async function updateRecurring(
 ): Promise<RecurringRule | null> {
   const input = v.recurringInput.parse(raw) as NewRecurringInput;
   v.idInput.parse(id);
-  const updated = await db.update("recurring_rules", id, {
+  const updated = await updateOwned("recurring_rules", id, {
     account_id: input.accountId,
     category_id: input.categoryId || null,
     description: enc(input.merchant)!,
@@ -1395,7 +1523,7 @@ export async function updateRecurring(
 
 export async function deleteRecurring(id: string): Promise<void> {
   v.idInput.parse(id);
-  await db.remove("recurring_rules", id);
+  await removeOwned("recurring_rules", id);
   revalidateRecurringViews();
 }
 
@@ -1410,7 +1538,7 @@ export async function postRecurring(
   const occurrence = rule.next_date;
   const txn = recurringTxnRow(rule, occurrence, userId);
   await db.insert("transactions", txn);
-  const updated = await db.update("recurring_rules", id, {
+  const updated = await updateOwned("recurring_rules", id, {
     next_date: advanceDate(occurrence, rule.cadence),
     last_posted: occurrence,
     updated_at: new Date().toISOString(),
@@ -1451,7 +1579,7 @@ export async function runDueRecurring(): Promise<{
       cursor = advanceDate(cursor, rule.cadence);
       guard++;
     }
-    const updated = await db.update("recurring_rules", rule.id, {
+    const updated = await updateOwned("recurring_rules", rule.id, {
       next_date: cursor,
       last_posted: last,
       updated_at: new Date().toISOString(),

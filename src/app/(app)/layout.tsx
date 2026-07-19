@@ -1,6 +1,8 @@
+import type { Metadata } from "next";
 import { Search } from "lucide-react";
 
 import { AppSidebar } from "@/components/app-sidebar";
+import { DataLoadError } from "@/components/data-load-error";
 import { ModeToggle } from "@/components/mode-toggle";
 import { PrivacyToggle } from "@/components/privacy-toggle";
 import { TransactionsProvider } from "@/components/transactions/transactions-provider";
@@ -25,6 +27,9 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 
+// The app is private + auth-gated — keep every page out of search indexes.
+export const metadata: Metadata = { robots: { index: false, follow: false } };
+
 export default async function AppLayout({
   children,
 }: {
@@ -45,6 +50,7 @@ export default async function AppLayout({
     rates: {},
   };
   let user: Awaited<ReturnType<typeof getCurrentUser>> = null;
+  let loadFailed = false;
 
   try {
     [
@@ -71,8 +77,13 @@ export default async function AppLayout({
       getCurrentUser(),
     ]);
   } catch (err) {
+    // Don't fall through with empty data — that would render an error as an
+    // empty account. Log server-side and show a distinct, retryable error state.
     console.error("[AppLayout] failed to load initial data:", err);
+    loadFailed = true;
   }
+
+  if (loadFailed) return <DataLoadError />;
 
   return (
     <SidebarProvider>

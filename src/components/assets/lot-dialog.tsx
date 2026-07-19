@@ -25,6 +25,7 @@ import {
 import type { Asset, AssetLot } from "@/lib/data";
 import type { NewAssetLotInput } from "@/lib/schema";
 import { currencyInfo, toMajorUnits, toMinorUnits } from "@/lib/currency";
+import { coinById } from "@/lib/coins";
 
 const KARATS = [24, 22, 21, 18];
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -47,6 +48,9 @@ export function LotDialog({
   onDelete: (id: string) => void;
 }) {
   const isEditing = Boolean(editing);
+  const isCrypto = asset?.type === "crypto";
+  const coin = coinById(asset?.symbol);
+  const unitLabel = isCrypto ? coin?.symbol ?? "coins" : "tola";
   const currency = editing?.currency ?? asset?.currency ?? "PKR";
   const [date, setDate] = useState(todayIso());
   const [quantity, setQuantity] = useState("");
@@ -98,15 +102,15 @@ export function LotDialog({
     if (!asset && !editing) return;
     const qty = Number.parseFloat(quantity);
     if (!Number.isFinite(qty) || qty <= 0)
-      return toast.error("Enter how much gold this purchase was (in tola).");
+      return toast.error(`Enter how much this purchase was (in ${unitLabel}).`);
     if (!Number.isFinite(gp) || gp < 0)
-      return toast.error("Enter the gold price you paid.");
+      return toast.error(isCrypto ? "Enter what you paid." : "Enter the gold price you paid.");
     const input: NewAssetLotInput = {
       assetId: editing?.assetId ?? asset!.id,
       date: date || todayIso(),
       quantity: qty,
-      unit: "tola",
-      karat,
+      unit: isCrypto ? null : "tola",
+      karat: isCrypto ? null : karat,
       goldCost: toMinorUnits(gp, currency),
       commission: toMinorUnits(cm, currency),
       tax: toMinorUnits(tx, currency),
@@ -157,7 +161,7 @@ export function LotDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="lot-qty">Quantity (tola)</Label>
+              <Label htmlFor="lot-qty">Quantity ({unitLabel})</Label>
               <Input
                 id="lot-qty"
                 type="number"
@@ -173,27 +177,29 @@ export function LotDialog({
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label>Purity</Label>
-            <Select value={String(karat)} onValueChange={(v) => setKarat(Number(v))}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {KARATS.map((k) => (
-                  <SelectItem key={k} value={String(k)}>
-                    {k}K{k === 24 ? " (pure)" : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {!isCrypto && (
+            <div className="space-y-1.5">
+              <Label>Purity</Label>
+              <Select value={String(karat)} onValueChange={(v) => setKarat(Number(v))}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {KARATS.map((k) => (
+                    <SelectItem key={k} value={String(k)}>
+                      {k}K{k === 24 ? " (pure)" : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <div className="space-y-2 rounded-lg border border-border/60 p-3">
             <p className="text-xs font-medium">What you paid ({currency})</p>
             <div className="space-y-1.5">
               <Label htmlFor="lot-price" className="text-xs text-muted-foreground">
-                Gold price
+                {isCrypto ? "Coin cost" : "Gold price"}
               </Label>
               <div className="relative">
                 <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
@@ -213,14 +219,15 @@ export function LotDialog({
               </div>
               {ratePerTola > 0 && (
                 <p className="text-[11px] text-muted-foreground">
-                  Rate: <span className="num">{sym}{fmt(ratePerTola)}</span> / tola
+                  {isCrypto ? "Avg price" : "Rate"}:{" "}
+                  <span className="num">{sym}{fmt(ratePerTola)}</span> / {unitLabel}
                 </p>
               )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="lot-comm" className="text-xs text-muted-foreground">
-                  Making / commission
+                  {isCrypto ? "Exchange fee" : "Making / commission"}
                 </Label>
                 <div className="relative">
                   <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
@@ -272,7 +279,9 @@ export function LotDialog({
             </div>
             {gp > 0 && (
               <p className="text-[11px] text-muted-foreground">
-                Making charge: {makingPct.toFixed(1)}% over metal.
+                {isCrypto
+                  ? `Fees: ${makingPct.toFixed(1)}%`
+                  : `Making charge: ${makingPct.toFixed(1)}% over metal.`}
               </p>
             )}
           </div>

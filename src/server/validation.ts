@@ -95,8 +95,8 @@ export const assetInput = z.object({
   value: intAmount,
   currency,
   note: z.string().trim().max(500).nullable(),
-  // Market-priced (gold) — optional.
-  symbol: z.enum(["XAU"]).nullable().optional(),
+  // Market-priced — "XAU" for gold, or a CoinGecko coin id for crypto.
+  symbol: z.string().trim().max(40).nullable().optional(),
   quantity: z
     .number()
     .refine((n) => Number.isFinite(n) && n > 0, "quantity must be > 0")
@@ -125,7 +125,7 @@ export const assetLotInput = z.object({
   assetId: idStr,
   date: isoDate,
   quantity: positiveQty,
-  unit: metalUnit,
+  unit: metalUnit.nullable(), // null for crypto
   karat: z.number().int().min(1).max(24).nullable(),
   goldCost: intAmount.nonnegative(),
   commission: intAmount.nonnegative(),
@@ -202,6 +202,12 @@ export const recurringInput = z.object({
 
 // A signed integer delta for adjusting a goal's saved amount.
 export const goalContribution = z.number().int();
+
+export const feedbackInput = z.object({
+  message: reqStr(4000),
+  rating: z.number().int().min(1).max(5).nullable().optional(),
+  page: z.string().trim().max(120).nullable().optional(),
+});
 
 export const idInput = idStr;
 export const categoryIdInput = z.string().trim().max(64);

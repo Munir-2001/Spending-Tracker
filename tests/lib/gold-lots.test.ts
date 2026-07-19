@@ -38,13 +38,13 @@ function lot(
 /** Live PKR value the way the refresh action computes it (sum per lot). */
 function liveValuePkr(lots: AssetLot[]): number {
   return lots.reduce(
-    (s, l) => s + toMinorUnits(goldValueMajor(l.quantity, l.unit, l.karat, gramPkr), "PKR"),
+    (s, l) => s + toMinorUnits(goldValueMajor(l.quantity, l.unit ?? "tola", l.karat, gramPkr), "PKR"),
     0
   );
 }
 
 function goldAsset(lots: AssetLot[], value: number): Asset {
-  const grams = lots.reduce((s, l) => s + gramsOf(l.quantity, l.unit), 0);
+  const grams = lots.reduce((s, l) => s + gramsOf(l.quantity, l.unit ?? "tola"), 0);
   return {
     id: "gold1",
     name: "Gold",
@@ -116,7 +116,7 @@ describe("goldPL", () => {
     const value = liveValuePkr(mixed);
     const g = goldPL(goldAsset(mixed, value), mixed, fx, USD_GRAM);
     const usdSum = mixed.reduce(
-      (s, l) => s + toMinorUnits(goldValueMajor(l.quantity, l.unit, l.karat, USD_GRAM), "USD"),
+      (s, l) => s + toMinorUnits(goldValueMajor(l.quantity, l.unit ?? "tola", l.karat, USD_GRAM), "USD"),
       0
     );
     expect(g.usd.value).toBe(usdSum);

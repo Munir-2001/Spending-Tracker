@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { GRAMS_PER_UNIT } from "@/lib/gold";
+import { CURRENCIES } from "@/lib/currency";
 
 /**
  * Live gold spot price (per-gram 24k, in USD), cached to disk with a 12h TTL.
@@ -22,6 +23,25 @@ const OZT_GRAMS = GRAMS_PER_UNIT.ozt; // 31.1034768 g per troy ounce
 
 const SWISSQUOTE_URL =
   "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD";
+
+/**
+ * Guard against a compromised, buggy, or spoofed upstream response: accept a
+ * number only if it's finite, positive, and within a sane range. Rejects
+ * NaN/Infinity/negatives/strings and absurd magnitudes that would otherwise
+ * corrupt downstream money math. We only ever read specific numeric fields off
+ * these responses (never render or eval them), so this bounds-check is the
+ * whole sanitization surface.
+ */
+function sane(n: unknown, max: number): number | null {
+  const v = typeof n === "number" ? n : Number(n);
+  return Number.isFinite(v) && v > 0 && v < max ? v : null;
+}
+// Loose upper bounds — wide enough to never reject a genuine quote, tight enough
+// to reject garbage or injected extreme values.
+const MAX_OZT = 1_000_000; // USD per troy ounce
+const MAX_GRAM = 1_000_000; // USD per gram
+const MAX_COIN_USD = 100_000_000; // USD per coin
+const MAX_FX_PER_USD = 1e9; // units of a currency per 1 USD
 
 // Prefer the project's /data dir (local mode); fall back to tmp on read-only
 // serverless filesystems.
@@ -66,14 +86,16 @@ async function fetchSwissquoteGram(): Promise<number | null> {
       cache: "no-store",
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as SwissquoteQuote[];
-    for (const platform of data ?? []) {
-      for (const p of platform.spreadProfilePrices ?? []) {
-        const bid = Number(p.bid);
-        const ask = Number(p.ask);
-        if (Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0) {
-          const midOzt = (bid + ask) / 2; // USD per troy ounce
-          return midOzt / OZT_GRAMS; // USD per gram, 24k
+    const data: unknown = await res.json();
+    if (!Array.isArray(data)) return null; // unexpected shape → reject
+    for (const platform of data as SwissquoteQuote[]) {
+      const profiles = platform?.spreadProfilePrices;
+      if (!Array.isArray(profiles)) continue;
+      for (const p of profiles) {
+        const bid = sane(p?.bid, MAX_OZT);
+        const ask = sane(p?.ask, MAX_OZT);
+        if (bid != null && ask != null) {
+          return sane((bid + ask) / 2 / OZT_GRAMS, MAX_GRAM); // per-gram 24k, USD
         }
       }
     }
@@ -93,9 +115,8 @@ async function fetchGoldApiGram(currency: string): Promise<number | null> {
       cache: "no-store",
     });
     if (!res.ok) return null;
-    const data = (await res.json()) as { price_gram_24k?: number };
-    const g = Number(data.price_gram_24k);
-    return Number.isFinite(g) && g > 0 ? g : null;
+    const data = (await res.json()) as { price_gram_24k?: unknown } | null;
+    return sane(data?.price_gram_24k, MAX_GRAM);
   } catch {
     return null;
   }
@@ -128,4 +149,118 @@ export async function getUsdGoldQuote(force = false): Promise<GoldQuote | null> 
     /* ignore */
   }
   return quote;
+}
+
+/**
+ * Live FX rates as "USD value of 1 unit of currency" — our numeraire convention
+ * — for the currencies the app supports. Source: open.er-api.com (free, no key),
+ * whose rates are units-per-USD, so we invert (1 / rate). Cached like the metal
+ * spot; `force` bypasses the cache. Falls back to the last-known cached rates on
+ * any failure (caller then layers its own defaults under these).
+ */
+export async function getFxRatesUsd(force = false): Promise<Record<string, number>> {
+  const cachedRates = (): Record<string, number> => {
+    const out: Record<string, number> = {};
+    for (const k of Object.keys(cache))
+      if (k.startsWith("FX:") && k !== "FX:__at__") out[k.slice(3)] = cache[k].gram24k;
+    return out;
+  };
+  const cache = await readCache();
+  const at = cache["FX:__at__"];
+  if (!force && at && Date.now() - Date.parse(at.at) < TTL_MS) return cachedRates();
+
+  try {
+    const res = await fetch("https://open.er-api.com/v6/latest/USD", {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!res.ok) return cachedRates();
+    const data = (await res.json()) as { result?: unknown; rates?: unknown };
+    if (data?.result !== "success" || !data.rates || typeof data.rates !== "object")
+      return cachedRates(); // unexpected / error shape → keep last-known
+    const rates = data.rates as Record<string, unknown>;
+    const stamp = new Date().toISOString();
+    const out: Record<string, number> = { USD: 1 };
+    for (const { code } of CURRENCIES) {
+      if (code === "USD") continue;
+      const perUsd = sane(rates[code], MAX_FX_PER_USD);
+      if (perUsd != null) {
+        const usdPerUnit = 1 / perUsd;
+        out[code] = usdPerUnit;
+        cache[`FX:${code}`] = { gram24k: usdPerUnit, currency: code, at: stamp };
+      }
+    }
+    cache["FX:__at__"] = { gram24k: 1, currency: "USD", at: stamp };
+    try {
+      await writeCache(cache);
+    } catch {
+      /* ignore */
+    }
+    return out;
+  } catch {
+    return cachedRates();
+  }
+}
+
+/**
+ * Current USD price per coin for a set of CoinGecko ids, in one call. Free
+ * public API, no key. Cached per coin with the same TTL as gold (reusing the
+ * quote cache — `gram24k` holds the coin's USD unit price). `force` bypasses the
+ * cache. Missing/failed coins fall back to their last-known price; unknown coins
+ * are simply absent from the result.
+ */
+export async function getCryptoPricesUsd(
+  ids: string[],
+  force = false
+): Promise<Record<string, number>> {
+  const unique = [...new Set(ids)].filter(Boolean);
+  if (unique.length === 0) return {};
+
+  const cache = await readCache();
+  const out: Record<string, number> = {};
+  const missing: string[] = [];
+  for (const id of unique) {
+    const hit = cache[`CRYPTO:${id}`];
+    if (!force && hit && Date.now() - Date.parse(hit.at) < TTL_MS) out[id] = hit.gram24k;
+    else missing.push(id);
+  }
+  if (missing.length === 0) return out;
+
+  try {
+    const res = await fetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${missing
+        .map(encodeURIComponent)
+        .join(",")}&vs_currencies=usd`,
+      { headers: { Accept: "application/json" }, cache: "no-store" }
+    );
+    if (res.ok) {
+      const raw: unknown = await res.json();
+      const data =
+        raw && typeof raw === "object"
+          ? (raw as Record<string, { usd?: unknown }>)
+          : {}; // unexpected shape → treat as empty, fall through to last-known
+      const at = new Date().toISOString();
+      for (const id of missing) {
+        const p = sane(data[id]?.usd, MAX_COIN_USD);
+        if (p != null) {
+          out[id] = p;
+          cache[`CRYPTO:${id}`] = { gram24k: p, currency: "USD", at };
+        } else if (cache[`CRYPTO:${id}`]) {
+          out[id] = cache[`CRYPTO:${id}`].gram24k; // stale but better than nothing
+        }
+      }
+      try {
+        await writeCache(cache);
+      } catch {
+        /* ignore */
+      }
+    } else {
+      for (const id of missing)
+        if (cache[`CRYPTO:${id}`]) out[id] = cache[`CRYPTO:${id}`].gram24k;
+    }
+  } catch {
+    for (const id of missing)
+      if (cache[`CRYPTO:${id}`]) out[id] = cache[`CRYPTO:${id}`].gram24k;
+  }
+  return out;
 }

@@ -35,8 +35,8 @@ export type AssetLot = {
   id: string;
   assetId: string;
   date: string; // ISO date
-  quantity: number; // in `unit`
-  unit: MetalUnit;
+  quantity: number; // in `unit` (or raw coin amount for crypto)
+  unit: MetalUnit | null; // null for crypto
   karat: number | null;
   goldCost: number; // metal price paid
   commission: number; // making / dealer commission
@@ -119,6 +119,14 @@ export type Goal = {
   currency: string;
   targetDate: string | null;
   tint: string;
+};
+
+export type Feedback = {
+  id: string;
+  message: string;
+  rating: number | null;
+  page: string | null;
+  createdAt: string; // ISO
 };
 
 export type RecurringRule = {

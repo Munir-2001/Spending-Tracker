@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -21,10 +22,12 @@ import {
   LifeBuoy,
   HelpCircle,
   ShieldCheck,
+  MessageSquarePlus,
   LogOut,
 } from "lucide-react";
 
 import { signOut } from "@/server/actions";
+import { FeedbackDialog } from "@/components/feedback-dialog";
 
 import {
   Sidebar,
@@ -40,24 +43,45 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 
-const primaryNav = [
-  { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-  { title: "Transactions", href: "/transactions", icon: ArrowLeftRight },
-  { title: "Accounts", href: "/accounts", icon: Wallet },
-  { title: "Assets", href: "/assets", icon: Boxes },
-  { title: "Categories", href: "/categories", icon: Tag },
-  { title: "Budgets", href: "/budgets", icon: Target },
-  { title: "Goals", href: "/goals", icon: PiggyBank },
-  { title: "Recurring", href: "/recurring", icon: CalendarClock },
-  { title: "Subscriptions", href: "/subscriptions", icon: Repeat },
-  { title: "Reimbursements", href: "/reimbursements", icon: HandCoins },
-  { title: "Insights", href: "/insights", icon: ChartPie },
-  { title: "Reports", href: "/reports", icon: PieChart },
-  { title: "Wrapped", href: "/wrapped", icon: Sparkles },
-  { title: "Ledger", href: "/ledger", icon: BookOpen },
+// Grouped so 14 destinations read as a few tidy sections instead of one wall.
+const navGroups = [
+  {
+    label: "Overview",
+    items: [
+      { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+      { title: "Insights", href: "/insights", icon: ChartPie },
+      { title: "Reports", href: "/reports", icon: PieChart },
+      { title: "Wrapped", href: "/wrapped", icon: Sparkles },
+    ],
+  },
+  {
+    label: "Money",
+    items: [
+      { title: "Transactions", href: "/transactions", icon: ArrowLeftRight },
+      { title: "Accounts", href: "/accounts", icon: Wallet },
+      { title: "Assets", href: "/assets", icon: Boxes },
+      { title: "Ledger", href: "/ledger", icon: BookOpen },
+    ],
+  },
+  {
+    label: "Planning",
+    items: [
+      { title: "Budgets", href: "/budgets", icon: Target },
+      { title: "Goals", href: "/goals", icon: PiggyBank },
+      { title: "Recurring", href: "/recurring", icon: CalendarClock },
+      { title: "Subscriptions", href: "/subscriptions", icon: Repeat },
+    ],
+  },
+  {
+    label: "Organize",
+    items: [
+      { title: "Categories", href: "/categories", icon: Tag },
+      { title: "Reimbursements", href: "/reimbursements", icon: HandCoins },
+    ],
+  },
 ];
 
-const secondaryNav = [
+const workspaceNav = [
   { title: "Settings", href: "/settings", icon: Settings },
   { title: "Support", href: "/support", icon: LifeBuoy },
   { title: "FAQ", href: "/faq", icon: HelpCircle },
@@ -70,6 +94,7 @@ export function AppSidebar({
   user: { name: string; email: string } | null;
 }) {
   const pathname = usePathname();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const isActive = (href: string) =>
     href === "/" ? pathname === "/" : pathname.startsWith(href);
   const initials = (user?.name ?? "You")
@@ -96,32 +121,44 @@ export function AppSidebar({
       </SidebarHeader>
 
       <SidebarContent className="px-2">
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {primaryNav.map((item) => (
-                <SidebarMenuItem key={item.href}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={isActive(item.href)}
-                    tooltip={item.title}
-                  >
-                    <Link href={item.href}>
-                      <item.icon className="size-4" />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {navGroups.map((group) => (
+          <SidebarGroup key={group.label}>
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((item) => (
+                  <SidebarMenuItem key={item.href}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isActive(item.href)}
+                      tooltip={item.title}
+                    >
+                      <Link href={item.href}>
+                        <item.icon className="size-4" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
 
         <SidebarGroup className="mt-auto">
           <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {secondaryNav.map((item) => (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  onClick={() => setFeedbackOpen(true)}
+                  tooltip="Send feedback"
+                >
+                  <MessageSquarePlus className="size-4" />
+                  <span>Feedback</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+              {workspaceNav.map((item) => (
                 <SidebarMenuItem key={item.href}>
                   <SidebarMenuButton
                     asChild
@@ -139,6 +176,8 @@ export function AppSidebar({
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+
+      <FeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
 
       <SidebarFooter className="p-2">
         <div className="flex items-center gap-2.5 rounded-lg border border-border/60 bg-card/60 p-2 group-data-[collapsible=icon]:hidden">

@@ -63,30 +63,39 @@ export async function insert<T extends TableName>(
   return data as TableMap[T];
 }
 
-/** Patch a row by id and return the updated record (or null if absent). */
+/**
+ * Patch a row by id and return the updated record (or null if absent). When
+ * `ownerId` is given, the update is additionally scoped to that user_id —
+ * defense in depth alongside RLS, so the query itself can never touch another
+ * user's row even if RLS were ever misconfigured.
+ */
 export async function update<T extends TableName>(
   table: T,
   id: string,
-  patch: Partial<TableMap[T]>
+  patch: Partial<TableMap[T]>,
+  ownerId?: string
 ): Promise<TableMap[T] | null> {
   const supabase = await createClient();
-  const { data, error } = await supabase
+  let q = supabase
     .from(table)
     .update(patch as Record<string, unknown>)
-    .eq("id", id)
-    .select()
-    .maybeSingle();
+    .eq("id", id);
+  if (ownerId) q = q.eq("user_id", ownerId);
+  const { data, error } = await q.select().maybeSingle();
   if (error) throw error;
   return (data as TableMap[T]) ?? null;
 }
 
-/** Delete a row by id. Returns true on success. */
+/** Delete a row by id (optionally scoped to `ownerId`). Returns true on success. */
 export async function remove<T extends TableName>(
   table: T,
-  id: string
+  id: string,
+  ownerId?: string
 ): Promise<boolean> {
   const supabase = await createClient();
-  const { error } = await supabase.from(table).delete().eq("id", id);
+  let q = supabase.from(table).delete().eq("id", id);
+  if (ownerId) q = q.eq("user_id", ownerId);
+  const { error } = await q;
   if (error) throw error;
   return true;
 }

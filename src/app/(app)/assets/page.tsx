@@ -35,10 +35,11 @@ import {
 import { useAppData } from "@/components/transactions/transactions-provider";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { LotDialog } from "@/components/assets/lot-dialog";
-import { assetsBase, goldPL, lotPL } from "@/lib/compute";
+import { assetsBase, goldPL, lotPL, cryptoPL, cryptoLotPL } from "@/lib/compute";
 import { UNIT_LABEL, GRAMS_PER_UNIT } from "@/lib/gold";
+import { coinTicker } from "@/lib/coins";
 import { formatMoney, formatRelativeDay } from "@/lib/format";
-import type { Fx } from "@/lib/currency";
+import { toMajorUnits, type Fx } from "@/lib/currency";
 import { cn } from "@/lib/utils";
 
 const icons: Record<AssetType, typeof Home> = {
@@ -90,6 +91,7 @@ export default function AssetsPage() {
   const [lotAsset, setLotAsset] = useState<Asset | null>(null);
   const [editingLot, setEditingLot] = useState<AssetLot | null>(null);
   const hasGold = assets.some((a) => a.symbol === "XAU");
+  const hasMarket = assets.some((a) => a.symbol); // gold or crypto (live-priced)
 
   async function handleRefresh() {
     setRefreshing(true);
@@ -126,24 +128,23 @@ export default function AssetsPage() {
     (a, b) => fx.toBase(b.value, b.currency) - fx.toBase(a.value, a.currency)
   );
 
-  // Cumulative gold performance vs. what you paid. The percentage is FX-invariant
-  // (same rate cancels in value/cost), and amounts show in the gold's own
-  // currency when all holdings share one, else the base currency.
-  const goldAssets = assets.filter((a) => a.symbol === "XAU");
-  const goldCcys = new Set(goldAssets.map((a) => a.currency));
-  const goldCcy = goldCcys.size === 1 ? [...goldCcys][0] : baseCurrency;
-  const goldCost = goldAssets.reduce(
-    (s, a) => s + fx.convert(a.costBasis ?? 0, a.currency, goldCcy),
-    0
+  // Cumulative performance of a market holding class vs. what you paid. The
+  // percentage is FX-invariant (the rate cancels in value/cost); amounts show in
+  // the holdings' own currency when they share one, else the base currency.
+  const perfOf = (list: typeof assets) => {
+    const ccys = new Set(list.map((a) => a.currency));
+    const ccy = ccys.size === 1 ? [...ccys][0] : baseCurrency;
+    const cost = list.reduce((s, a) => s + fx.convert(a.costBasis ?? 0, a.currency, ccy), 0);
+    const value = list.reduce((s, a) => s + fx.convert(a.value, a.currency, ccy), 0);
+    const pl = value - cost;
+    const dir: "up" | "down" | "flat" = pl > 0 ? "up" : pl < 0 ? "down" : "flat";
+    return { ccy, cost, value, pl, plPct: cost ? (pl / cost) * 100 : 0, dir };
+  };
+  const goldPerf = perfOf(assets.filter((a) => a.symbol === "XAU"));
+  const cryptoPerf = perfOf(
+    assets.filter((a) => a.type === "crypto" && a.symbol && a.symbol !== "XAU")
   );
-  const goldValue = goldAssets.reduce(
-    (s, a) => s + fx.convert(a.value, a.currency, goldCcy),
-    0
-  );
-  const goldPl = goldValue - goldCost;
-  const goldPlPct = goldCost ? (goldPl / goldCost) * 100 : 0;
-  const goldDir: "up" | "down" | "flat" =
-    goldPl > 0 ? "up" : goldPl < 0 ? "down" : "flat";
+  const hasCrypto = assets.some((a) => a.type === "crypto" && a.symbol && a.symbol !== "XAU");
 
   return (
     <div className="mx-auto max-w-4xl px-5 py-10 md:px-8 md:py-14">
@@ -157,7 +158,7 @@ export default function AssetsPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {hasGold && (
+            {hasMarket && (
               <Button
                 size="sm"
                 variant="outline"
@@ -177,11 +178,11 @@ export default function AssetsPage() {
         </div>
       </Reveal>
 
-      {hasGold && goldPricedAt && (
+      {hasMarket && goldPricedAt && (
         <Reveal delay={0.03}>
           <p className="mt-3 text-xs text-muted-foreground">
-            Gold priced {formatRelativeDay(goldPricedAt)} · international spot (USD)
-            × your holdings, converted at your rates.
+            Priced {formatRelativeDay(goldPricedAt)} · live spot (USD) × your
+            holdings, converted at your rates.
           </p>
         </Reveal>
       )}
@@ -223,51 +224,12 @@ export default function AssetsPage() {
 
           {hasGold && (
             <Reveal delay={0.08}>
-              <div
-                className={cn(
-                  "mt-3 flex items-center justify-between gap-4 rounded-2xl border p-5",
-                  goldDir === "up" && "border-income/25 bg-income/[0.06]",
-                  goldDir === "down" && "border-expense/25 bg-expense/[0.06]",
-                  goldDir === "flat" && "border-border/60 bg-card"
-                )}
-              >
-                <div className="min-w-0">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
-                    Gold · vs what you paid
-                  </p>
-                  <p className="num mt-1.5 truncate text-sm">
-                    {formatMoney(goldValue, { currency: goldCcy })}
-                    <span className="text-muted-foreground/70"> now · </span>
-                    {formatMoney(goldCost, { currency: goldCcy })}
-                    <span className="text-muted-foreground/70"> paid</span>
-                  </p>
-                </div>
-                <div
-                  className={cn(
-                    "flex shrink-0 items-center gap-2",
-                    goldDir === "up" && "text-income",
-                    goldDir === "down" && "text-expense",
-                    goldDir === "flat" && "text-muted-foreground"
-                  )}
-                >
-                  {goldDir === "up" ? (
-                    <ArrowUpRight className="size-7" strokeWidth={2.25} />
-                  ) : goldDir === "down" ? (
-                    <ArrowDownRight className="size-7" strokeWidth={2.25} />
-                  ) : (
-                    <Minus className="size-7" strokeWidth={2.25} />
-                  )}
-                  <div className="text-right">
-                    <p className="num text-2xl font-semibold leading-none tabular-nums">
-                      {goldPl > 0 ? "+" : ""}
-                      {goldPlPct.toFixed(1)}%
-                    </p>
-                    <p className="num mt-1 text-xs font-medium tabular-nums">
-                      {formatMoney(goldPl, { currency: goldCcy, signed: true })}
-                    </p>
-                  </div>
-                </div>
-              </div>
+              <PerfCard label="Gold · vs what you paid" perf={goldPerf} />
+            </Reveal>
+          )}
+          {hasCrypto && (
+            <Reveal delay={0.1}>
+              <PerfCard label="Crypto · vs what you paid" perf={cryptoPerf} />
             </Reveal>
           )}
 
@@ -278,7 +240,7 @@ export default function AssetsPage() {
                   key={a.id}
                   asset={a}
                   lots={
-                    a.symbol === "XAU"
+                    a.symbol
                       ? lots
                           .filter((l) => l.assetId === a.id)
                           .sort((x, y) => (x.date < y.date ? 1 : -1))
@@ -338,19 +300,31 @@ function AssetRow({
   const Icon = icons[asset.type] ?? Package;
   const sameAsBase = baseValue === formatMoney(asset.value, { currency: asset.currency });
   const isGold = asset.symbol === "XAU";
+  const isCrypto = asset.type === "crypto" && !!asset.symbol && asset.symbol !== "XAU";
+  const isMarket = isGold || isCrypto;
   const gpl = isGold ? goldPL(asset, lots, fx, usdGram) : null;
-  const goldSub =
+  const cpl = isCrypto ? cryptoPL(asset, lots, fx) : null;
+  const pl = gpl ?? cpl; // both expose { native, usd }
+  const ticker = isCrypto ? coinTicker(asset.symbol) : "";
+  const fmtQty = (q: number, d = 2) =>
+    q.toLocaleString(undefined, { maximumFractionDigits: d });
+  const sub =
     isGold && asset.quantity != null && asset.unit
-      ? `${asset.quantity.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${
-          UNIT_LABEL[asset.unit]
-        } · ${asset.karat ?? 24}K`
-      : null;
+      ? `${fmtQty(asset.quantity)} ${UNIT_LABEL[asset.unit]} · ${asset.karat ?? 24}K`
+      : isCrypto && asset.quantity != null
+        ? `${fmtQty(asset.quantity, 8)} ${ticker}`
+        : null;
+  // Current per-unit price used to value each lot in the history.
   const gramPrice = isGold ? gramPriceIn(asset.currency, usdGram, fx) : null;
+  const coinPrice =
+    isCrypto && asset.quantity
+      ? toMajorUnits(asset.value, asset.currency) / asset.quantity
+      : null;
 
   return (
     <li>
       <div className="flex items-center gap-3 px-3 py-3">
-        {isGold ? (
+        {isMarket ? (
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
@@ -370,35 +344,33 @@ function AssetRow({
           <p className="truncate text-sm font-medium leading-tight">{asset.name}</p>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {typeLabels[asset.type]}
-            {goldSub ? ` · ${goldSub}` : ""}
-            {!isGold && asset.note ? ` · ${asset.note}` : ""}
+            {sub ? ` · ${sub}` : ""}
+            {!isMarket && asset.note ? ` · ${asset.note}` : ""}
           </p>
         </div>
         <div className="text-right">
           <p className="num text-sm font-semibold tabular-nums">
             {formatMoney(asset.value, { currency: asset.currency })}
           </p>
-          {gpl ? (
+          {pl ? (
             <>
               <p
                 className={cn(
                   "num text-[11px] font-medium tabular-nums",
-                  gpl.native.pl >= 0 ? "text-income" : "text-expense"
+                  pl.native.pl >= 0 ? "text-income" : "text-expense"
                 )}
               >
-                {formatMoney(gpl.native.pl, { currency: asset.currency, signed: true })}
-                {gpl.native.plPct != null
-                  ? ` · ${gpl.native.pl >= 0 ? "+" : ""}${gpl.native.plPct.toFixed(1)}%`
+                {formatMoney(pl.native.pl, { currency: asset.currency, signed: true })}
+                {pl.native.plPct != null
+                  ? ` · ${pl.native.pl >= 0 ? "+" : ""}${pl.native.plPct.toFixed(1)}%`
                   : ""}
               </p>
               <p className="num text-[11px] tabular-nums text-muted-foreground">
-                ≈ {formatMoney(gpl.usd.value, { currency: "USD" })}
-                {usdGram != null ? (
-                  <span className={gpl.usd.pl >= 0 ? "text-income" : "text-expense"}>
-                    {" "}
-                    {formatMoney(gpl.usd.pl, { currency: "USD", signed: true })}
-                  </span>
-                ) : null}
+                ≈ {formatMoney(pl.usd.value, { currency: "USD" })}
+                <span className={pl.usd.pl >= 0 ? "text-income" : "text-expense"}>
+                  {" "}
+                  {formatMoney(pl.usd.pl, { currency: "USD", signed: true })}
+                </span>
               </p>
             </>
           ) : (
@@ -419,7 +391,7 @@ function AssetRow({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            {isGold && (
+            {isMarket && (
               <DropdownMenuItem onClick={onAddLot}>
                 <Plus className="size-4" />
                 Add purchase
@@ -437,23 +409,26 @@ function AssetRow({
         </DropdownMenu>
       </div>
 
-      {isGold && expanded && (
+      {isMarket && expanded && (
         <div className="mb-2 ml-[3.25rem] mr-2 rounded-xl border border-border/60 bg-surface/50 p-3">
-          {gpl && (
+          {pl && (
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2 text-[11px] text-muted-foreground">
               <span>
                 Avg cost{" "}
                 <span className="num text-foreground">
-                  {formatMoney(Math.round(gpl.avgCostPerGram * GRAMS_PER_UNIT.tola), {
-                    currency: asset.currency,
-                  })}
-                  /tola
+                  {gpl
+                    ? `${formatMoney(Math.round(gpl.avgCostPerGram * GRAMS_PER_UNIT.tola), {
+                        currency: asset.currency,
+                      })}/tola`
+                    : `${formatMoney(Math.round(cpl!.avgCostPerUnit), {
+                        currency: asset.currency,
+                      })}/${ticker}`}
                 </span>
               </span>
               <span>
-                Making charge{" "}
+                {isGold ? "Making charge" : "Fees"}{" "}
                 <span className="num text-foreground">
-                  {gpl.makingChargePct.toFixed(1)}%
+                  {(gpl?.makingChargePct ?? cpl?.feePct ?? 0).toFixed(1)}%
                 </span>
               </span>
             </div>
@@ -466,15 +441,20 @@ function AssetRow({
               </li>
             ) : (
               lots.map((lot) => {
-                const val = gramPrice != null ? lotPL(lot, gramPrice) : null;
+                const val =
+                  gramPrice != null
+                    ? lotPL(lot, gramPrice)
+                    : coinPrice != null
+                      ? cryptoLotPL(lot, coinPrice)
+                      : null;
                 return (
                   <li key={lot.id} className="flex items-center gap-2 py-2">
                     <div className="min-w-0 flex-1">
                       <p className="num text-xs font-medium">
-                        {lot.quantity.toLocaleString(undefined, {
-                          maximumFractionDigits: 2,
-                        })}{" "}
-                        {UNIT_LABEL[lot.unit]} · {lot.karat ?? 24}K
+                        {fmtQty(lot.quantity, isCrypto ? 8 : 2)}{" "}
+                        {isCrypto
+                          ? ticker
+                          : `${UNIT_LABEL[lot.unit ?? "tola"]} · ${lot.karat ?? 24}K`}
                       </p>
                       <p className="mt-0.5 text-[11px] text-muted-foreground">
                         {formatRelativeDay(lot.date)} · cost{" "}
@@ -501,7 +481,7 @@ function AssetRow({
                                 currency: lot.currency,
                               })}
                             </span>
-                            /tola
+                            /{isCrypto ? ticker : "tola"}
                           </>
                         ) : null}
                       </p>
@@ -551,5 +531,65 @@ function AssetRow({
         </div>
       )}
     </li>
+  );
+}
+
+type Perf = {
+  ccy: string;
+  cost: number;
+  value: number;
+  pl: number;
+  plPct: number;
+  dir: "up" | "down" | "flat";
+};
+
+/** Cumulative up/down performance of a holding class vs. what was paid. */
+function PerfCard({ label, perf }: { label: string; perf: Perf }) {
+  return (
+    <div
+      className={cn(
+        "mt-3 flex items-center justify-between gap-4 rounded-2xl border p-5",
+        perf.dir === "up" && "border-income/25 bg-income/[0.06]",
+        perf.dir === "down" && "border-expense/25 bg-expense/[0.06]",
+        perf.dir === "flat" && "border-border/60 bg-card"
+      )}
+    >
+      <div className="min-w-0">
+        <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+          {label}
+        </p>
+        <p className="num mt-1.5 truncate text-sm">
+          {formatMoney(perf.value, { currency: perf.ccy })}
+          <span className="text-muted-foreground/70"> now · </span>
+          {formatMoney(perf.cost, { currency: perf.ccy })}
+          <span className="text-muted-foreground/70"> paid</span>
+        </p>
+      </div>
+      <div
+        className={cn(
+          "flex shrink-0 items-center gap-2",
+          perf.dir === "up" && "text-income",
+          perf.dir === "down" && "text-expense",
+          perf.dir === "flat" && "text-muted-foreground"
+        )}
+      >
+        {perf.dir === "up" ? (
+          <ArrowUpRight className="size-7" strokeWidth={2.25} />
+        ) : perf.dir === "down" ? (
+          <ArrowDownRight className="size-7" strokeWidth={2.25} />
+        ) : (
+          <Minus className="size-7" strokeWidth={2.25} />
+        )}
+        <div className="text-right">
+          <p className="num text-2xl font-semibold leading-none tabular-nums">
+            {perf.pl > 0 ? "+" : ""}
+            {perf.plPct.toFixed(1)}%
+          </p>
+          <p className="num mt-1 text-xs font-medium tabular-nums">
+            {formatMoney(perf.pl, { currency: perf.ccy, signed: true })}
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }

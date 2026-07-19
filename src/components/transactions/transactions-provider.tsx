@@ -66,6 +66,7 @@ import {
   updateAsset as updateAssetAction,
   updateCategory as updateCategoryAction,
   updateSettings as updateSettingsAction,
+  refreshRates as refreshRatesAction,
   updateTransaction,
   type AppSettings,
   type ImportRow,
@@ -205,6 +206,8 @@ type Ctx = {
   fx: Fx;
   rates: Record<string, number>;
   updateSettings: (settings: AppSettings) => void;
+  /** Pull fresh live exchange rates. */
+  refreshRates: () => Promise<void>;
   /** Preferred wallet, pre-selected for new transactions (null = none). */
   defaultAccountId: string | null;
   setDefaultAccount: (id: string | null) => void;
@@ -281,6 +284,20 @@ export function TransactionsProvider({
     },
     [defaultAccountId]
   );
+
+  // Pull fresh live FX rates on demand (the settings "Refresh rates" button).
+  const refreshRates = useCallback(async () => {
+    loader.start();
+    try {
+      const next = await refreshRatesAction();
+      setRates(next);
+      toast.success("Exchange rates updated");
+    } catch {
+      toast.error("Couldn't refresh exchange rates.");
+    } finally {
+      loader.done();
+    }
+  }, []);
 
   // Set (or clear, with null) the preferred wallet for new transactions.
   const setDefaultAccount = useCallback(
@@ -496,11 +513,11 @@ export function TransactionsProvider({
     }
   }, []);
 
-  // On mount, quietly re-price gold from the (daily-cached) spot.
+  // On mount, quietly re-price market holdings (gold + crypto) from the cache.
   const didGold = useRef(false);
   useEffect(() => {
     if (didGold.current) return;
-    if (!assets.some((a) => a.symbol === "XAU")) return;
+    if (!assets.some((a) => a.symbol)) return;
     didGold.current = true;
     refreshGold(true);
   }, [assets, refreshGold]);
@@ -536,8 +553,9 @@ export function TransactionsProvider({
       createAssetAction(input)
         .then(async (saved) => {
           setAssets((prev) => [...prev, saved]);
-          // A new gold holding also created its first lot server-side.
-          if (saved.symbol === "XAU") {
+          // A new market holding (gold or crypto) also created its first lot
+          // server-side — pull it in and price it live.
+          if (saved.symbol) {
             setLots(await listAllLotsAction());
             refreshGold(true);
           }
@@ -870,6 +888,7 @@ export function TransactionsProvider({
       fx,
       rates,
       updateSettings,
+      refreshRates,
       defaultAccountId,
       setDefaultAccount,
 }),
@@ -943,6 +962,7 @@ export function TransactionsProvider({
       fx,
       rates,
       updateSettings,
+      refreshRates,
       defaultAccountId,
       setDefaultAccount,
 ]

@@ -155,6 +155,23 @@ export type UserSettingsRow = {
   updated_at: string;
 };
 
+export type FeedbackRow = {
+  id: string;
+  user_id: string;
+  org_id: string | null;
+  rating: number | null;
+  message: string; // plain text (readable in the dashboard)
+  page: string | null;
+  created_at: string;
+};
+
+/** Input for submitting feedback (UI-facing). */
+export type NewFeedbackInput = {
+  message: string;
+  rating?: number | null;
+  page?: string | null;
+};
+
 /**
  * A single purchase ("lot") of a market-priced holding (gold now, crypto later).
  * The parent AssetRow keeps the aggregate quantity/cost_basis; lots are the
@@ -166,8 +183,8 @@ export type AssetLotRow = {
   org_id: string | null;
   asset_id: string;
   date: string; // ISO date
-  quantity: number; // amount bought, in `unit`
-  unit: MetalUnit;
+  quantity: number; // amount bought, in `unit` (or raw coin amount for crypto)
+  unit: MetalUnit | null; // null for crypto (no metal unit)
   karat: number | null; // 24 = pure; null for non-metal
   gold_cost: number; // metal price paid, minor units of `currency`
   commission: number; // making / dealer commission, minor units
@@ -230,6 +247,7 @@ export type TableMap = {
   goals: GoalRow;
   recurring_rules: RecurringRow;
   user_settings: UserSettingsRow;
+  feedback: FeedbackRow;
 };
 
 export type TableName = keyof TableMap;
@@ -303,8 +321,8 @@ export type NewAssetInput = {
 export type NewAssetLotInput = {
   assetId: string;
   date: string; // ISO date
-  quantity: number; // in `unit`
-  unit: MetalUnit;
+  quantity: number; // in `unit` (or raw coin amount for crypto)
+  unit: MetalUnit | null; // null for crypto
   karat: number | null;
   goldCost: number; // minor units of `currency`
   commission: number;

@@ -458,6 +458,10 @@ async function recomputeAssetFromLots(assetId: string): Promise<void> {
 export async function createAssetLot(raw: NewAssetLotInput): Promise<AssetLot> {
   const input = v.assetLotInput.parse(raw) as NewAssetLotInput;
   const userId = await getUserId();
+  // Confirm the parent asset is the caller's own (RLS-scoped read) so a lot
+  // can't be attached to another user's asset id.
+  const parent = await db.findById("assets", input.assetId);
+  if (!parent) throw new Error("Asset not found");
   const now = new Date().toISOString();
   const { rates } = await getSettings();
   const row: AssetLotRow = {

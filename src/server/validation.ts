@@ -171,10 +171,12 @@ export const importRows = z
 
 export const settingsInput = z.object({
   baseCurrency: currency,
-  rates: z.record(
-    z.string().trim().max(8),
-    z.number().refine((n) => Number.isFinite(n) && n > 0, "rate must be > 0")
-  ),
+  rates: z
+    .record(
+      z.string().trim().max(8),
+      z.number().refine((n) => Number.isFinite(n) && n > 0, "rate must be > 0")
+    )
+    .refine((r) => Object.keys(r).length <= 100, "too many rate entries"),
   defaultAccountId: idStr.nullable().optional(),
 });
 

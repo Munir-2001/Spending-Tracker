@@ -101,6 +101,9 @@ export type TransactionLineRow = {
   category_id: string | null;
   description: string;
   amount: number; // minor units, signed (same direction as the parent total)
+  // True when this specific item was bought for a friend (owed back to you).
+  // The parent transaction carries the claim (person / owed total / settled).
+  reimbursable: boolean;
   created_at: string;
 };
 
@@ -257,6 +260,8 @@ export type NewTransactionLine = {
   categoryId: string;
   description: string;
   amount: number; // signed minor units (same direction as the total)
+  /** When true, this item was bought for a friend (counts toward what's owed). */
+  reimbursable?: boolean;
 };
 
 /** Input for creating a transaction (UI-facing, camelCase). */

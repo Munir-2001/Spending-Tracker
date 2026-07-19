@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Plus, Wallet, Trash2, X } from "lucide-react";
+import { Plus, Wallet, Trash2, X, HandCoins } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -36,7 +36,13 @@ import { cn } from "@/lib/utils";
 import type { NewTransaction } from "@/components/transactions/transactions-provider";
 
 type Kind = "expense" | "income" | "transfer";
-type ItemRow = { key: string; description: string; categoryId: string; amount: string };
+type ItemRow = {
+  key: string;
+  description: string;
+  categoryId: string;
+  amount: string;
+  reimbursable: boolean;
+};
 const today = () => new Date().toISOString().slice(0, 10);
 
 let _itemKey = 0;
@@ -133,6 +139,7 @@ export function AddTransactionDialog({
     description: "",
     categoryId: expenseCategories[0]?.id ?? "",
     amount: "",
+    reimbursable: false,
   });
 
   // Prefill (edit) or seed defaults (create) whenever the dialog opens.
@@ -148,14 +155,16 @@ export function AddTransactionDialog({
       setAccountId(editing.accountId);
       setCurrency(cur);
       setDate(editing.date);
-      if (editing.items && editing.items.length) {
+      const hasItems = Boolean(editing.items && editing.items.length);
+      if (hasItems) {
         setItemized(true);
         setItemRows(
-          editing.items.map((i) => ({
+          editing.items!.map((i) => ({
             key: keyGen(),
             description: i.description,
             categoryId: i.categoryId,
             amount: String(Math.abs(toMajorUnits(i.amount, cur))),
+            reimbursable: Boolean(i.reimbursable),
           }))
         );
       } else {
@@ -163,9 +172,15 @@ export function AddTransactionDialog({
         setItemRows([]);
       }
       if (editing.reimbursement) {
-        setReimbOn(true);
+        // Split → the friend fields live in the per-item panel (whole-txn toggle
+        // stays off); simple expense → the whole-transaction toggle.
+        setReimbOn(!hasItems);
         setReimbPerson(editing.reimbursement.person);
-        setReimbAmount(String(Math.abs(toMajorUnits(editing.reimbursement.amount, cur))));
+        setReimbAmount(
+          hasItems
+            ? ""
+            : String(Math.abs(toMajorUnits(editing.reimbursement.amount, cur)))
+        );
         setReimbNote(editing.reimbursement.note);
       } else {
         setReimbOn(false);
@@ -221,6 +236,15 @@ export function AddTransactionDialog({
     [selectable, assets, accountId]
   );
   const itemsTotal = itemRows.reduce(
+    (s, r) => s + (Number.parseFloat(r.amount) || 0),
+    0
+  );
+  // Items tagged as bought for a friend — their sum is what the friend owes.
+  const taggedItems = itemRows.filter(
+    (r) => r.reimbursable && (Number.parseFloat(r.amount) || 0) > 0
+  );
+  const taggedCount = taggedItems.length;
+  const taggedTotal = taggedItems.reduce(
     (s, r) => s + (Number.parseFloat(r.amount) || 0),
     0
   );
@@ -307,6 +331,7 @@ export function AddTransactionDialog({
           categoryId: r.categoryId,
           description: r.description.trim(),
           major: Number.parseFloat(r.amount),
+          reimbursable: r.reimbursable,
         }))
         .filter((r) => Number.isFinite(r.major) && r.major > 0);
       if (rows.length === 0)
@@ -316,6 +341,7 @@ export function AddTransactionDialog({
         categoryId: r.categoryId,
         description: r.description,
         amount: -toMinorUnits(r.major, currency),
+        reimbursable: r.reimbursable,
       }));
       const total = items.reduce((s, i) => s + i.amount, 0);
       input = {
@@ -327,6 +353,20 @@ export function AddTransactionDialog({
         date,
         items,
       };
+
+      // Items tagged for a friend become the transaction's reimbursement claim
+      // (owed = sum of tagged items), reusing the same settle/Reimbursements flow.
+      const tagged = rows.filter((r) => r.reimbursable);
+      if (tagged.length > 0) {
+        if (!reimbPerson.trim())
+          return toast.error("Add the friend's name for the tagged items.");
+        const owed = tagged.reduce((s, r) => s + toMinorUnits(r.major, currency), 0);
+        input.reimbursement = {
+          person: reimbPerson.trim(),
+          amount: owed,
+          note: reimbNote.trim(),
+        };
+      }
     } else {
       const major = Number.parseFloat(amount);
       if (!Number.isFinite(major) || major <= 0)
@@ -782,39 +822,64 @@ export function AddTransactionDialog({
                           <X className="size-4" />
                         </Button>
                       </div>
-                      <Select
-                        value={row.categoryId}
-                        onValueChange={(v) =>
-                          setItemRows((prev) =>
-                            prev.map((r) =>
-                              r.key === row.key ? { ...r, categoryId: v } : r
+                      <div className="flex items-center gap-2">
+                        <Select
+                          value={row.categoryId}
+                          onValueChange={(v) =>
+                            setItemRows((prev) =>
+                              prev.map((r) =>
+                                r.key === row.key ? { ...r, categoryId: v } : r
+                              )
                             )
-                          )
-                        }
-                      >
-                        <SelectTrigger className="h-8 w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {orderedExpenseCats.map(({ cat, depth }) => (
-                            <SelectItem key={cat.id} value={cat.id}>
-                              <span
-                                className="flex items-center gap-2"
-                                style={{ paddingLeft: depth * 14 }}
-                              >
+                          }
+                        >
+                          <SelectTrigger className="h-8 min-w-0 flex-1">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {orderedExpenseCats.map(({ cat, depth }) => (
+                              <SelectItem key={cat.id} value={cat.id}>
                                 <span
-                                  className="size-2 rounded-full"
-                                  style={{ backgroundColor: cat.tint }}
-                                />
-                                {depth > 0 && (
-                                  <span className="text-muted-foreground">↳</span>
-                                )}
-                                {cat.label}
-                              </span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                                  className="flex items-center gap-2"
+                                  style={{ paddingLeft: depth * 14 }}
+                                >
+                                  <span
+                                    className="size-2 rounded-full"
+                                    style={{ backgroundColor: cat.tint }}
+                                  />
+                                  {depth > 0 && (
+                                    <span className="text-muted-foreground">↳</span>
+                                  )}
+                                  {cat.label}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setItemRows((prev) =>
+                              prev.map((r) =>
+                                r.key === row.key
+                                  ? { ...r, reimbursable: !r.reimbursable }
+                                  : r
+                              )
+                            )
+                          }
+                          aria-pressed={row.reimbursable}
+                          title="Bought for a friend — they owe you this item"
+                          className={cn(
+                            "flex h-8 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium transition-colors",
+                            row.reimbursable
+                              ? "border-income/40 bg-income/10 text-income"
+                              : "border-border/60 text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          <HandCoins className="size-3.5" />
+                          Friend
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -838,6 +903,45 @@ export function AddTransactionDialog({
                     </span>
                   </span>
                 </div>
+
+                {/* Per-item "bought for a friend" — friend + note; owed is derived */}
+                {taggedCount > 0 && (
+                  <div className="space-y-3 rounded-lg border border-income/30 bg-income/5 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="flex items-center gap-1.5 text-sm font-medium">
+                        <HandCoins className="size-4 text-income" />
+                        {taggedCount} {taggedCount === 1 ? "item" : "items"} for a
+                        friend
+                      </span>
+                      <span className="num text-sm font-medium text-income">
+                        {symbol}
+                        {taggedTotal.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="split-person">Friend&apos;s name</Label>
+                      <Input
+                        id="split-person"
+                        value={reimbPerson}
+                        onChange={(e) => setReimbPerson(e.target.value)}
+                        placeholder="Ali"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="split-note">Note (optional)</Label>
+                      <Input
+                        id="split-note"
+                        value={reimbNote}
+                        onChange={(e) => setReimbNote(e.target.value)}
+                        placeholder="Their share of the shop"
+                      />
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Tagged items won&apos;t count as your spending, and the refund
+                      won&apos;t count as income — track it in Reimbursements.
+                    </p>
+                  </div>
+                )}
               </div>
             ) : (
               kind === "expense" && (

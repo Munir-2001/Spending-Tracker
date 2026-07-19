@@ -22,9 +22,13 @@ import { gramsOf, goldValueMajor, makingChargePct } from "@/lib/gold";
  */
 export function categoryLinesOf(
   t: Transaction
-): { categoryId: string; amount: number }[] {
+): { categoryId: string; amount: number; reimbursable?: boolean }[] {
   if (t.items && t.items.length)
-    return t.items.map((i) => ({ categoryId: i.categoryId, amount: i.amount }));
+    return t.items.map((i) => ({
+      categoryId: i.categoryId,
+      amount: i.amount,
+      reimbursable: i.reimbursable,
+    }));
   return [{ categoryId: t.categoryId, amount: t.amount }];
 }
 
@@ -543,7 +547,9 @@ export function spendingByCategoryBase(
     if (t.isReimbursement || t.isTransfer) continue;
     const split = Boolean(t.items?.length);
     for (const line of categoryLinesOf(t)) {
-      // Exclude the reimbursable portion (non-split only) from the category total.
+      // A tagged split item is fully owed by a friend — not your spending.
+      if (split && line.reimbursable) continue;
+      // For a non-split reimbursable expense, net out the owed portion.
       const amt =
         t.reimbursement && !split ? line.amount + t.reimbursement.amount : line.amount;
       if (amt >= 0) continue; // expenses only

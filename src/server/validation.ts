@@ -61,6 +61,7 @@ const lineInput = z.object({
   categoryId: idStr,
   description: z.string().trim().max(200),
   amount: intAmount,
+  reimbursable: z.boolean().optional(),
 });
 
 export const transactionInput = z.object({

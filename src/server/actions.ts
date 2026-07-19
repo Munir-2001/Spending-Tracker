@@ -145,6 +145,7 @@ function lineToUi(r: TransactionLineRow): TransactionItem {
     categoryId: r.category_id ?? "",
     description: dec(r.description) ?? "",
     amount: r.amount,
+    reimbursable: r.reimbursable ?? false,
   };
 }
 
@@ -759,6 +760,7 @@ function buildLines(
     category_id: it.categoryId || null, // "" → null (uuid column)
     description: enc(it.description) ?? "",
     amount: it.amount,
+    reimbursable: it.reimbursable ?? false,
     created_at: now,
   }));
   const total = rows.reduce((s, r) => s + r.amount, 0);

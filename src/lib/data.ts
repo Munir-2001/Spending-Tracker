@@ -73,6 +73,8 @@ export type TransactionItem = {
   categoryId: string;
   description: string;
   amount: number; // minor units of the parent currency, signed
+  /** True when this item was bought for a friend (part of the parent's claim). */
+  reimbursable?: boolean;
 };
 
 export type Transaction = {

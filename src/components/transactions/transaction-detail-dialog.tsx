@@ -136,6 +136,12 @@ export function TransactionDetailDialog({
                   <span className="min-w-0 flex-1 truncate">
                     {it.description || c?.label || "Item"}
                   </span>
+                  {it.reimbursable && (
+                    <HandCoins
+                      className="size-3.5 shrink-0 text-income"
+                      aria-label={`For ${reimb?.person || "a friend"}`}
+                    />
+                  )}
                   <span className="num tabular-nums">
                     {formatMoney(it.amount, { currency: t.currency })}
                   </span>

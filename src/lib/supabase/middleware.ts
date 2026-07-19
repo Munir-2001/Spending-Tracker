@@ -52,12 +52,21 @@ export async function updateSession(
 
   const path = request.nextUrl.pathname;
   // Publicly reachable without signing in: the landing (which hosts the Google
-  // OAuth button), the OAuth callback, and legal pages.
+  // OAuth button), the OAuth callback, legal pages, and the SEO / social /
+  // metadata assets — those are fetched by unauthenticated crawlers and social
+  // scrapers, so they must never be redirected to the landing.
   const isPublicRoute =
     path === "/" ||
     path.startsWith("/auth") ||
     path.startsWith("/privacy") ||
-    path.startsWith("/terms");
+    path.startsWith("/terms") ||
+    path.startsWith("/opengraph-image") ||
+    path.startsWith("/twitter-image") ||
+    path.startsWith("/icon") ||
+    path === "/robots.txt" ||
+    path === "/sitemap.xml" ||
+    path === "/llms.txt" ||
+    path === "/manifest.webmanifest";
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();

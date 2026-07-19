@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { Fraunces, Hanken_Grotesk, Geist_Mono } from "next/font/google";
+import { Analytics } from "@vercel/analytics/next";
+import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
@@ -88,6 +90,10 @@ export default function RootLayout({
           <TooltipProvider delayDuration={150}>{children}</TooltipProvider>
           <Toaster position="bottom-right" />
         </ThemeProvider>
+        {/* Privacy-preserving traffic analytics (cookieless, no PII). */}
+        <Analytics />
+        {/* Core Web Vitals / performance metrics. */}
+        <SpeedInsights />
       </body>
     </html>
   );

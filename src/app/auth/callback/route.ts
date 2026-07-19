@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { track } from "@vercel/analytics/server";
 import { createClient } from "@/lib/supabase/server";
 
 /**
@@ -32,6 +33,18 @@ export async function GET(request: Request) {
     const supabase = await createClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
+      // Fire a signup event only for brand-new users (their auth row was created
+      // moments ago) so the funnel counts conversions, not repeat logins.
+      // Analytics must never block auth, so this is best-effort.
+      try {
+        const { data } = await supabase.auth.getUser();
+        const createdAt = data.user?.created_at;
+        if (createdAt && Date.now() - Date.parse(createdAt) < 60_000) {
+          await track("signup_completed");
+        }
+      } catch {
+        /* ignore — analytics is non-critical */
+      }
       return NextResponse.redirect(`${origin}${next}`);
     }
     // A NEW signup is rejected by the DB trigger once we're at the user cap.

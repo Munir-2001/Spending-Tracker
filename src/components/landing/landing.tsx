@@ -10,6 +10,7 @@ import { StorySteps } from "@/components/landing/story";
 import { Notice } from "@/components/landing/notice";
 import { Tape } from "@/components/landing/tape";
 import { createClient } from "@/lib/supabase/client";
+import { track } from "@vercel/analytics";
 
 // Self-contained "quiet-luxury" palette — the marketing surface commits to a
 // single dark, editorial look regardless of the app's light/dark theme.
@@ -66,6 +67,7 @@ export function Landing() {
   async function signIn() {
     setError(null);
     setLoading(true);
+    track("signin_clicked");
     try {
       const supabase = createClient();
       const { error } = await supabase.auth.signInWithOAuth({

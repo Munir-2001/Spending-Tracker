@@ -77,8 +77,12 @@ export default async function AppLayout({
       getCurrentUser(),
     ]);
   } catch (err) {
-    // Don't fall through with empty data — that would render an error as an
-    // empty account. Log server-side and show a distinct, retryable error state.
+    // Re-throw Next's control-flow signals (dynamic-rendering bailout, redirect,
+    // notFound) — they carry a `digest` and swallowing them breaks rendering.
+    if (err && typeof err === "object" && "digest" in err) throw err;
+    // A genuine data-load failure: don't fall through with empty data (that
+    // would render an error as an empty account). Log it and show a distinct,
+    // retryable error state instead.
     console.error("[AppLayout] failed to load initial data:", err);
     loadFailed = true;
   }

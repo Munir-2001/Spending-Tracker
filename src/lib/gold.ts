@@ -41,3 +41,17 @@ export function goldValueMajor(
 ): number {
   return gramsOf(quantity, unit) * gram24kPrice * purityOf(karat);
 }
+
+/**
+ * The premium paid over the metal's spot value — i.e. making/dealer charges as a
+ * percentage of the pure gold cost. Exact from the split fields; needs no spot.
+ * Returns 0 when there's no metal cost to compare against.
+ */
+export function makingChargePct(
+  commission: number,
+  tax: number,
+  goldCost: number
+): number {
+  if (!goldCost) return 0;
+  return ((commission + tax) / goldCost) * 100;
+}

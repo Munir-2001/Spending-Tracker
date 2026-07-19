@@ -56,6 +56,7 @@ export function AddTransactionDialog({
   assets,
   categories,
   fx,
+  defaultAccountId,
   onAddAccount,
   onAddAsset,
 }: {
@@ -72,6 +73,7 @@ export function AddTransactionDialog({
   assets: Asset[];
   categories: Category[];
   fx: Fx;
+  defaultAccountId: string | null;
   onAddAccount: () => void;
   onAddAsset: () => void;
 }) {
@@ -184,9 +186,13 @@ export function AddTransactionDialog({
       setRepayOn(false);
       setRepayClaimId("");
       setToTarget("");
-      const defAcc = accountsById.get(accountId) ?? selectable[0];
-      setAccountId((prev) => prev || selectable[0]?.id || "");
-      setCurrency(defAcc?.currency ?? "USD");
+      // Seed with the user's default wallet (if it still exists), else the first.
+      const seedId =
+        (defaultAccountId && accountsById.has(defaultAccountId)
+          ? defaultAccountId
+          : selectable[0]?.id) || "";
+      setAccountId((prev) => prev || seedId);
+      setCurrency(accountsById.get(seedId)?.currency ?? "USD");
       setCategoryId((prev) => prev || expenseCategories[0]?.id || "");
     }
     // Initialize only when the dialog opens or a different transaction is loaded.

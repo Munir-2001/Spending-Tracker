@@ -44,6 +44,8 @@ export const ASSET_TYPES: { value: AssetType; label: string }[] = [
 
 const KARATS = [24, 22, 21, 18];
 
+const todayIso = () => new Date().toISOString().slice(0, 10);
+
 export function AssetDialog({
   open,
   onOpenChange,
@@ -67,7 +69,11 @@ export function AssetDialog({
   const [note, setNote] = useState("");
   const [quantity, setQuantity] = useState("");
   const [karat, setKarat] = useState(24);
-  const [cost, setCost] = useState("");
+  // Gold purchase, itemized (first lot on create).
+  const [goldPrice, setGoldPrice] = useState("");
+  const [commission, setCommission] = useState("");
+  const [tax, setTax] = useState("");
+  const [lotDate, setLotDate] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
 
   const isGold = type === "gold";
@@ -83,11 +89,12 @@ export function AssetDialog({
       setNote(editing.note ?? "");
       setQuantity(editing.quantity != null ? String(editing.quantity) : "");
       setKarat(editing.karat ?? 24);
-      setCost(
-        editing.costBasis != null
-          ? String(toMajorUnits(editing.costBasis, editing.currency))
-          : ""
-      );
+      // Editing a gold holding changes metadata only — purchases (cost basis)
+      // are managed as lots on the asset's page, so the split fields stay blank.
+      setGoldPrice("");
+      setCommission("");
+      setTax("");
+      setLotDate(todayIso());
     } else {
       setName("");
       setType("property");
@@ -96,7 +103,10 @@ export function AssetDialog({
       setNote("");
       setQuantity("");
       setKarat(24);
-      setCost("");
+      setGoldPrice("");
+      setCommission("");
+      setTax("");
+      setLotDate(todayIso());
     }
   }, [open, editing]);
 
@@ -105,14 +115,39 @@ export function AssetDialog({
     if (!name.trim()) return toast.error("Give the asset a name.");
 
     if (isGold) {
+      // Editing a gold holding = metadata only; preserve its lot-derived
+      // aggregates so updateAsset doesn't null them out.
+      if (editing) {
+        onSave(editing.id, {
+          name: name.trim(),
+          type,
+          value: editing.value,
+          currency: editing.currency,
+          note: note.trim() || null,
+          symbol: "XAU",
+          quantity: editing.quantity,
+          unit: editing.unit ?? "tola",
+          karat: editing.karat,
+          costBasis: editing.costBasis,
+        });
+        toast.success("Gold updated", { description: name.trim() });
+        onOpenChange(false);
+        return;
+      }
+
       const qty = Number.parseFloat(quantity);
       if (!Number.isFinite(qty) || qty <= 0)
         return toast.error("Enter how much gold you hold (in tola).");
-      const paid = Number.parseFloat(cost);
-      if (!Number.isFinite(paid) || paid < 0)
-        return toast.error("Enter what you paid for it.");
-      const costMinor = toMinorUnits(paid, currency);
-      const input: NewAssetInput = {
+      const gp = Number.parseFloat(goldPrice);
+      if (!Number.isFinite(gp) || gp < 0)
+        return toast.error("Enter the gold price you paid.");
+      const cm = Number.parseFloat(commission) || 0;
+      const tx = Number.parseFloat(tax) || 0;
+      const goldCostMinor = toMinorUnits(gp, currency);
+      const commissionMinor = toMinorUnits(cm, currency);
+      const taxMinor = toMinorUnits(tx, currency);
+      const costMinor = goldCostMinor + commissionMinor + taxMinor;
+      onCreate({
         name: name.trim(),
         type,
         // Seed value with cost until the first live price refresh updates it.
@@ -124,16 +159,16 @@ export function AssetDialog({
         unit: "tola",
         karat,
         costBasis: costMinor,
-      };
-      if (editing) {
-        onSave(editing.id, input);
-        toast.success("Gold updated", { description: name.trim() });
-      } else {
-        onCreate(input);
-        toast.success("Gold added", {
-          description: "Prices refresh automatically.",
-        });
-      }
+        firstLot: {
+          date: lotDate || todayIso(),
+          goldCost: goldCostMinor,
+          commission: commissionMinor,
+          tax: taxMinor,
+        },
+      });
+      toast.success("Gold added", {
+        description: "Prices refresh automatically.",
+      });
       onOpenChange(false);
       return;
     }
@@ -165,6 +200,15 @@ export function AssetDialog({
     toast.success("Asset removed", { description: editing.name });
     onOpenChange(false);
   }
+
+  const gpNum = Number.parseFloat(goldPrice) || 0;
+  const cmNum = Number.parseFloat(commission) || 0;
+  const txNum = Number.parseFloat(tax) || 0;
+  const totalCost = gpNum + cmNum + txNum;
+  const makingPct = gpNum > 0 ? ((cmNum + txNum) / gpNum) * 100 : 0;
+  const sym = currencyInfo(currency).symbol;
+  const qtyNum = Number.parseFloat(quantity) || 0;
+  const ratePerTola = qtyNum > 0 && gpNum > 0 ? gpNum / qtyNum : 0;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -268,29 +312,121 @@ export function AssetDialog({
                 </div>
               </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="gold-cost">What you paid ({currency})</Label>
-                <div className="relative">
-                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                    {currencyInfo(currency).symbol}
-                  </span>
-                  <Input
-                    id="gold-cost"
-                    type="number"
-                    inputMode="decimal"
-                    step="any"
-                    min="0"
-                    value={cost}
-                    onChange={(e) => setCost(e.target.value)}
-                    placeholder="0"
-                    className="num pl-7"
-                  />
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  Your cost basis. Current value updates from the live gold price —
-                  we&apos;ll show your profit/loss.
+              {isEditing ? (
+                <p className="rounded-md bg-muted/50 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                  Cost basis and purchases are managed as lots on the asset — use
+                  “Add purchase” on the assets page to record another buy.
                 </p>
-              </div>
+              ) : (
+                <>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="gold-date">Purchase date</Label>
+                    <Input
+                      id="gold-date"
+                      type="date"
+                      value={lotDate}
+                      onChange={(e) => setLotDate(e.target.value)}
+                      max={todayIso()}
+                    />
+                  </div>
+
+                  <div className="space-y-2 rounded-lg border border-border/60 p-3">
+                    <p className="text-xs font-medium">What you paid ({currency})</p>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="gold-price" className="text-xs text-muted-foreground">
+                        Gold price
+                      </Label>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                          {sym}
+                        </span>
+                        <Input
+                          id="gold-price"
+                          type="number"
+                          inputMode="decimal"
+                          step="any"
+                          min="0"
+                          value={goldPrice}
+                          onChange={(e) => setGoldPrice(e.target.value)}
+                          placeholder="0"
+                          className="num pl-7"
+                        />
+                      </div>
+                      {ratePerTola > 0 && (
+                        <p className="text-[11px] text-muted-foreground">
+                          Rate:{" "}
+                          <span className="num">
+                            {sym}
+                            {ratePerTola.toLocaleString(undefined, {
+                              maximumFractionDigits: currencyInfo(currency).decimals,
+                            })}
+                          </span>{" "}
+                          / tola
+                        </p>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1.5">
+                        <Label htmlFor="gold-comm" className="text-xs text-muted-foreground">
+                          Making / commission
+                        </Label>
+                        <div className="relative">
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                            {sym}
+                          </span>
+                          <Input
+                            id="gold-comm"
+                            type="number"
+                            inputMode="decimal"
+                            step="any"
+                            min="0"
+                            value={commission}
+                            onChange={(e) => setCommission(e.target.value)}
+                            placeholder="0"
+                            className="num pl-7"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor="gold-tax" className="text-xs text-muted-foreground">
+                          Tax (optional)
+                        </Label>
+                        <div className="relative">
+                          <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                            {sym}
+                          </span>
+                          <Input
+                            id="gold-tax"
+                            type="number"
+                            inputMode="decimal"
+                            step="any"
+                            min="0"
+                            value={tax}
+                            onChange={(e) => setTax(e.target.value)}
+                            placeholder="0"
+                            className="num pl-7"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-baseline justify-between border-t border-border/60 pt-2">
+                      <span className="text-xs text-muted-foreground">Total cost basis</span>
+                      <span className="num text-sm font-semibold">
+                        {sym}
+                        {totalCost.toLocaleString(undefined, {
+                          maximumFractionDigits: currencyInfo(currency).decimals,
+                        })}
+                      </span>
+                    </div>
+                    {gpNum > 0 && (
+                      <p className="text-[11px] text-muted-foreground">
+                        Making charge: {makingPct.toFixed(1)}% over metal. Current value
+                        updates from the live gold price — we&apos;ll show your profit/loss.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
             </>
           ) : (
             <div className="space-y-1.5">

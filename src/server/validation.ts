@@ -105,6 +105,33 @@ export const assetInput = z.object({
   unit: z.enum(["tola", "gram", "gram10", "ozt"]).nullable().optional(),
   karat: z.number().int().min(1).max(24).nullable().optional(),
   costBasis: intAmount.nonnegative().nullable().optional(),
+  // First purchase's itemized cost, so a new gold asset seeds its first lot.
+  firstLot: z
+    .object({
+      date: isoDate,
+      goldCost: intAmount.nonnegative(),
+      commission: intAmount.nonnegative(),
+      tax: intAmount.nonnegative(),
+    })
+    .optional(),
+});
+
+const metalUnit = z.enum(["tola", "gram", "gram10", "ozt"]);
+const positiveQty = z
+  .number()
+  .refine((n) => Number.isFinite(n) && n > 0, "quantity must be > 0");
+
+export const assetLotInput = z.object({
+  assetId: idStr,
+  date: isoDate,
+  quantity: positiveQty,
+  unit: metalUnit,
+  karat: z.number().int().min(1).max(24).nullable(),
+  goldCost: intAmount.nonnegative(),
+  commission: intAmount.nonnegative(),
+  tax: intAmount.nonnegative(),
+  currency,
+  note: z.string().trim().max(500).nullable().optional(),
 });
 
 export const categoryInput = z.object({
@@ -148,6 +175,7 @@ export const settingsInput = z.object({
     z.string().trim().max(8),
     z.number().refine((n) => Number.isFinite(n) && n > 0, "rate must be > 0")
   ),
+  defaultAccountId: idStr.nullable().optional(),
 });
 
 export const goalInput = z.object({

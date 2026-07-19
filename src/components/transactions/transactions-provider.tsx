@@ -14,6 +14,7 @@ import { toast } from "sonner";
 import type {
   Account,
   Asset,
+  AssetLot,
   Budget,
   Category,
   Goal,
@@ -23,6 +24,7 @@ import type {
 import type {
   NewAccountInput,
   NewAssetInput,
+  NewAssetLotInput,
   NewCategoryInput,
   NewGoalInput,
   NewRecurringInput,
@@ -34,6 +36,10 @@ import { makeFx, type Fx } from "@/lib/currency";
 import {
   createAccount,
   createAsset as createAssetAction,
+  createAssetLot as createAssetLotAction,
+  updateAssetLot as updateAssetLotAction,
+  deleteAssetLot as deleteAssetLotAction,
+  listAllLots as listAllLotsAction,
   createCategory as createCategoryAction,
   createTransaction,
   deleteAccount as deleteAccountAction,
@@ -155,6 +161,14 @@ type Ctx = {
   /** Re-price gold assets from the live spot. */
   refreshGold: (silent?: boolean) => Promise<void>;
   goldPricedAt: string | null;
+  /** Latest USD per-gram 24k spot, so P/L can be shown exactly in USD. */
+  usdGram: number | null;
+
+  // Gold purchase lots
+  lots: AssetLot[];
+  addLot: (input: NewAssetLotInput) => void;
+  saveLot: (id: string, input: NewAssetLotInput) => void;
+  deleteLot: (id: string) => void;
 
   // Savings goals
   goals: Goal[];
@@ -191,6 +205,9 @@ type Ctx = {
   fx: Fx;
   rates: Record<string, number>;
   updateSettings: (settings: AppSettings) => void;
+  /** Preferred wallet, pre-selected for new transactions (null = none). */
+  defaultAccountId: string | null;
+  setDefaultAccount: (id: string | null) => void;
 };
 
 const AppDataContext = createContext<Ctx | null>(null);
@@ -204,6 +221,7 @@ export function TransactionsProvider({
   initialCategories,
   initialBudgets,
   initialAssets,
+  initialLots,
   initialGoals,
   initialRecurring,
   initialSettings,
@@ -214,6 +232,7 @@ export function TransactionsProvider({
   initialCategories: Category[];
   initialBudgets: Budget[];
   initialAssets: Asset[];
+  initialLots: AssetLot[];
   initialGoals: Goal[];
   initialRecurring: RecurringRule[];
   initialSettings: AppSettings;
@@ -226,7 +245,9 @@ export function TransactionsProvider({
   const [categories, setCategories] = useState<Category[]>(initialCategories);
   const [budgets, setBudgets] = useState<Budget[]>(initialBudgets);
   const [assets, setAssets] = useState<Asset[]>(initialAssets);
+  const [lots, setLots] = useState<AssetLot[]>(initialLots);
   const [goldPricedAt, setGoldPricedAt] = useState<string | null>(null);
+  const [usdGram, setUsdGram] = useState<number | null>(null);
   const [goals, setGoals] = useState<Goal[]>(initialGoals);
   const [recurring, setRecurring] = useState<RecurringRule[]>(initialRecurring);
   const [isGoalOpen, setGoalOpenState] = useState(false);
@@ -241,15 +262,36 @@ export function TransactionsProvider({
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [baseCurrency, setBaseCurrency] = useState(initialSettings.baseCurrency);
   const [rates, setRates] = useState(initialSettings.rates);
+  const [defaultAccountId, setDefaultAccountId] = useState<string | null>(
+    initialSettings.defaultAccountId ?? null
+  );
   const fx = useMemo(() => makeFx(baseCurrency, rates), [baseCurrency, rates]);
 
-  const updateSettings = useCallback((s: AppSettings) => {
-    setBaseCurrency(s.baseCurrency);
-    setRates(s.rates);
-    updateSettingsAction(s).catch(() =>
-      toast.error("Couldn't save currency settings.")
-    );
-  }, []);
+  const updateSettings = useCallback(
+    (s: AppSettings) => {
+      setBaseCurrency(s.baseCurrency);
+      setRates(s.rates);
+      // Preserve the current default account unless this call changes it.
+      const nextDefault =
+        s.defaultAccountId !== undefined ? s.defaultAccountId : defaultAccountId;
+      setDefaultAccountId(nextDefault);
+      updateSettingsAction({ ...s, defaultAccountId: nextDefault }).catch(() =>
+        toast.error("Couldn't save settings.")
+      );
+    },
+    [defaultAccountId]
+  );
+
+  // Set (or clear, with null) the preferred wallet for new transactions.
+  const setDefaultAccount = useCallback(
+    (id: string | null) => {
+      setDefaultAccountId(id);
+      updateSettingsAction({ baseCurrency, rates, defaultAccountId: id }).catch(() =>
+        toast.error("Couldn't set default account.")
+      );
+    },
+    [baseCurrency, rates]
+  );
   const [isAddOpen, setAddOpenState] = useState(false);
   const [editingTransaction, setEditingTransaction] =
     useState<Transaction | null>(null);
@@ -427,21 +469,24 @@ export function TransactionsProvider({
       });
   }, []);
 
-  const refreshGold = useCallback(async (silent = false) => {
+  const refreshGold = useCallback(async (silent = false, force = !silent) => {
     if (!silent) loader.start();
     try {
-      const { assets: next, pricedAt, live } = await refreshGoldPricesAction();
+      // An explicit refresh forces a fresh fetch; background refreshes reuse cache.
+      const { assets: next, pricedAt, live, usdGram: gram } =
+        await refreshGoldPricesAction(force);
       setAssets(next);
       if (pricedAt) setGoldPricedAt(pricedAt);
+      if (gram != null) setUsdGram(gram);
       if (!silent) {
         if (live) toast.success("Gold prices updated");
         else if (pricedAt)
           toast.message("Showing last saved prices", {
-            description: "Add GOLD_API_KEY to .env for live updates.",
+            description: "The live price feed is momentarily unavailable — try again shortly.",
           });
         else
           toast.message("No live prices yet", {
-            description: "Add GOLD_API_KEY to .env to fetch gold prices.",
+            description: "The gold price feed is unreachable right now. Please try again.",
           });
       }
     } catch {
@@ -486,11 +531,21 @@ export function TransactionsProvider({
       .catch(() => toast.error("Couldn't save budget. Please try again."));
   }, []);
 
-  const addAsset = useCallback((input: NewAssetInput) => {
-    createAssetAction(input)
-      .then((saved) => setAssets((prev) => [...prev, saved]))
-      .catch(() => toast.error("Couldn't add asset. Please try again."));
-  }, []);
+  const addAsset = useCallback(
+    (input: NewAssetInput) => {
+      createAssetAction(input)
+        .then(async (saved) => {
+          setAssets((prev) => [...prev, saved]);
+          // A new gold holding also created its first lot server-side.
+          if (saved.symbol === "XAU") {
+            setLots(await listAllLotsAction());
+            refreshGold(true);
+          }
+        })
+        .catch(() => toast.error("Couldn't add asset. Please try again."));
+    },
+    [refreshGold]
+  );
 
   const saveAsset = useCallback((id: string, input: NewAssetInput) => {
     updateAssetAction(id, input)
@@ -502,9 +557,50 @@ export function TransactionsProvider({
 
   const deleteAsset = useCallback((id: string) => {
     deleteAssetAction(id)
-      .then(() => setAssets((prev) => prev.filter((a) => a.id !== id)))
+      .then(() => {
+        setAssets((prev) => prev.filter((a) => a.id !== id));
+        setLots((prev) => prev.filter((l) => l.assetId !== id));
+      })
       .catch(() => toast.error("Couldn't delete asset. Please try again."));
   }, []);
+
+  // Gold purchase lots. Each mutation recomputes the parent asset server-side,
+  // so re-price after to sync the aggregate quantity/cost/value.
+  const addLot = useCallback(
+    (input: NewAssetLotInput) => {
+      createAssetLotAction(input)
+        .then((saved) => {
+          setLots((prev) => [...prev, saved]);
+          return refreshGold(true);
+        })
+        .catch(() => toast.error("Couldn't add purchase. Please try again."));
+    },
+    [refreshGold]
+  );
+
+  const saveLot = useCallback(
+    (id: string, input: NewAssetLotInput) => {
+      updateAssetLotAction(id, input)
+        .then((saved) => {
+          if (saved) setLots((prev) => prev.map((l) => (l.id === id ? saved : l)));
+          return refreshGold(true);
+        })
+        .catch(() => toast.error("Couldn't update purchase. Please try again."));
+    },
+    [refreshGold]
+  );
+
+  const deleteLot = useCallback(
+    (id: string) => {
+      deleteAssetLotAction(id)
+        .then(() => {
+          setLots((prev) => prev.filter((l) => l.id !== id));
+          return refreshGold(true);
+        })
+        .catch(() => toast.error("Couldn't delete purchase. Please try again."));
+    },
+    [refreshGold]
+  );
 
   const setAssetOpen = useCallback((open: boolean) => {
     setAssetOpenState(open);
@@ -562,14 +658,16 @@ export function TransactionsProvider({
 
   const deleteAccount = useCallback((id: string) => {
     deleteAccountAction(id)
-      .then(() =>
+      .then(() => {
+        // The DB clears default_account_id via ON DELETE SET NULL; mirror it here.
+        setDefaultAccountId((cur) => (cur === id ? null : cur));
         setAccounts((prev) =>
           // Drop the account; promote its children to top level.
           prev
             .filter((a) => a.id !== id)
             .map((a) => (a.parentId === id ? { ...a, parentId: null } : a))
-        )
-      )
+        );
+      })
       .catch(() => toast.error("Couldn't delete account. Please try again."));
   }, []);
 
@@ -722,6 +820,11 @@ export function TransactionsProvider({
       setAssetOpen,
       refreshGold,
       goldPricedAt,
+      usdGram,
+      lots,
+      addLot,
+      saveLot,
+      deleteLot,
       goals,
       addGoal,
       saveGoal,
@@ -767,7 +870,9 @@ export function TransactionsProvider({
       fx,
       rates,
       updateSettings,
-    }),
+      defaultAccountId,
+      setDefaultAccount,
+}),
     [
       items,
       addTransaction,
@@ -812,6 +917,11 @@ export function TransactionsProvider({
       setAssetOpen,
       refreshGold,
       goldPricedAt,
+      usdGram,
+      lots,
+      addLot,
+      saveLot,
+      deleteLot,
       goals,
       addGoal,
       saveGoal,
@@ -833,7 +943,9 @@ export function TransactionsProvider({
       fx,
       rates,
       updateSettings,
-    ]
+      defaultAccountId,
+      setDefaultAccount,
+]
   );
 
   return (
@@ -853,6 +965,7 @@ export function TransactionsProvider({
         assets={assets}
         categories={categories}
         fx={fx}
+        defaultAccountId={defaultAccountId}
         onAddAccount={() => {
           setAddOpen(false);
           setAddAccountOpen(true);

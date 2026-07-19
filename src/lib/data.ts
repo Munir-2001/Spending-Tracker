@@ -26,6 +26,25 @@ export type Asset = {
   unit: MetalUnit | null;
   karat: number | null;
   costBasis: number | null; // minor units of `currency` — what you paid
+  // Per-purchase lots (gold). Populated for market-priced holdings.
+  lots?: AssetLot[];
+};
+
+/** A single purchase of a market-priced holding (gold). All amounts minor units. */
+export type AssetLot = {
+  id: string;
+  assetId: string;
+  date: string; // ISO date
+  quantity: number; // in `unit`
+  unit: MetalUnit;
+  karat: number | null;
+  goldCost: number; // metal price paid
+  commission: number; // making / dealer commission
+  tax: number; // optional tax
+  costBasis: number; // = goldCost + commission + tax
+  currency: string;
+  purchaseFxRate: number | null; // USD value of 1 unit of `currency` at purchase
+  note: string | null;
 };
 
 export type Account = {

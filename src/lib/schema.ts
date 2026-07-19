@@ -151,6 +151,33 @@ export type UserSettingsRow = {
   user_id: string;
   base_currency: string;
   rates: Record<string, number>;
+  default_account_id: string | null;
+  updated_at: string;
+};
+
+/**
+ * A single purchase ("lot") of a market-priced holding (gold now, crypto later).
+ * The parent AssetRow keeps the aggregate quantity/cost_basis; lots are the
+ * source of truth for cost basis and per-purchase P/L.
+ */
+export type AssetLotRow = {
+  id: string;
+  user_id: string;
+  org_id: string | null;
+  asset_id: string;
+  date: string; // ISO date
+  quantity: number; // amount bought, in `unit`
+  unit: MetalUnit;
+  karat: number | null; // 24 = pure; null for non-metal
+  gold_cost: number; // metal price paid, minor units of `currency`
+  commission: number; // making / dealer commission, minor units
+  tax: number; // optional tax, minor units
+  cost_basis: number; // = gold_cost + commission + tax
+  currency: string;
+  // USD value of 1 unit of `currency` at purchase; null → use current rate.
+  purchase_fx_rate: number | null;
+  note: string | null; // encrypted at rest
+  created_at: string;
   updated_at: string;
 };
 
@@ -199,6 +226,7 @@ export type TableMap = {
   transaction_lines: TransactionLineRow;
   budgets: BudgetRow;
   assets: AssetRow;
+  asset_lots: AssetLotRow;
   goals: GoalRow;
   recurring_rules: RecurringRow;
   user_settings: UserSettingsRow;
@@ -261,6 +289,28 @@ export type NewAssetInput = {
   unit?: MetalUnit | null;
   karat?: number | null;
   costBasis?: number | null;
+  // For a new gold asset: the itemized cost of the FIRST purchase, so the
+  // create action can seed the parent + its first lot atomically.
+  firstLot?: {
+    date: string;
+    goldCost: number; // minor units of `currency`
+    commission: number;
+    tax: number;
+  };
+};
+
+/** Input for creating/editing a purchase lot (UI-facing, camelCase). */
+export type NewAssetLotInput = {
+  assetId: string;
+  date: string; // ISO date
+  quantity: number; // in `unit`
+  unit: MetalUnit;
+  karat: number | null;
+  goldCost: number; // minor units of `currency`
+  commission: number;
+  tax: number;
+  currency: string;
+  note?: string | null;
 };
 
 /** Input for creating/editing a category (UI-facing, camelCase). */

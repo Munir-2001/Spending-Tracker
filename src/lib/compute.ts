@@ -6,11 +6,14 @@
 import type {
   Account,
   Asset,
+  AssetLot,
   Category,
   RecurringRule,
   Transaction,
 } from "@/lib/data";
 import type { Fx } from "@/lib/currency";
+import { toMinorUnits, toMajorUnits } from "@/lib/currency";
+import { gramsOf, goldValueMajor, makingChargePct } from "@/lib/gold";
 
 /**
  * The per-category contributions of a transaction. Split transactions return
@@ -72,6 +75,104 @@ export function monthFlowsBase(
 /** Total value of all assets, converted to base currency. */
 export function assetsBase(assets: Asset[], fx: Fx): number {
   return assets.reduce((sum, a) => sum + fx.toBase(a.value, a.currency), 0);
+}
+
+// ── Gold cost-basis & P/L ────────────────────────────────────────────────────
+
+/** Weighted-average cost per gram across lots, in minor units of their currency. */
+export function weightedAvgCostPerGram(lots: AssetLot[]): number {
+  const grams = lots.reduce((s, l) => s + gramsOf(l.quantity, l.unit), 0);
+  if (!grams) return 0;
+  const cost = lots.reduce((s, l) => s + l.costBasis, 0);
+  return cost / grams;
+}
+
+/**
+ * Profit/loss of a single lot given the current per-gram 24k price in the lot's
+ * currency (major units). `value`/`pl` are minor units of the lot currency.
+ */
+export function lotPL(
+  lot: AssetLot,
+  gramPrice: number
+): { value: number; pl: number; plPct: number | null } {
+  const value = toMinorUnits(
+    goldValueMajor(lot.quantity, lot.unit, lot.karat, gramPrice),
+    lot.currency
+  );
+  const pl = value - lot.costBasis;
+  return { value, pl, plPct: lot.costBasis ? (pl / lot.costBasis) * 100 : null };
+}
+
+type PLSide = { value: number; cost: number; pl: number; plPct: number | null };
+
+export type GoldPL = {
+  native: PLSide; // in the asset's own currency (e.g. PKR)
+  usd: PLSide; // benchmarked in USD
+  makingChargePct: number; // premium paid over spot metal cost
+  avgCostPerGram: number; // minor units of native currency per gram
+};
+
+const side = (value: number, cost: number): PLSide => ({
+  value,
+  cost,
+  pl: value - cost,
+  plPct: cost ? ((value - cost) / cost) * 100 : null,
+});
+
+/**
+ * Dual-currency P/L for a gold holding. Native P/L uses the live market `value`
+ * vs. cost basis. USD value comes from the raw USD spot (`usdGram`, per-gram 24k)
+ * when available — exact, no round-trip; USD cost is pinned at each lot's
+ * purchase FX rate so the USD figure reflects gold movement, not currency drift.
+ * Falls back to `fx` conversion when the spot / purchase rate is missing.
+ */
+export function goldPL(
+  asset: Asset,
+  lots: AssetLot[],
+  fx: Fx,
+  usdGram: number | null
+): GoldPL {
+  const nativeCost = asset.costBasis ?? 0;
+
+  // USD value: exact from the USD spot, else convert the native market value.
+  let usdValue: number;
+  if (usdGram != null && lots.length > 0) {
+    usdValue = lots.reduce(
+      (s, l) => s + toMinorUnits(goldValueMajor(l.quantity, l.unit, l.karat, usdGram), "USD"),
+      0
+    );
+  } else if (usdGram != null && asset.quantity != null && asset.unit) {
+    usdValue = toMinorUnits(
+      goldValueMajor(asset.quantity, asset.unit, asset.karat, usdGram),
+      "USD"
+    );
+  } else {
+    usdValue = fx.convert(asset.value, asset.currency, "USD");
+  }
+
+  // USD cost: pinned at each lot's purchase FX rate (USD value of 1 unit paid).
+  const usdCost =
+    lots.length > 0
+      ? lots.reduce(
+          (s, l) =>
+            s +
+            (l.purchaseFxRate != null
+              ? toMinorUnits(toMajorUnits(l.costBasis, l.currency) * l.purchaseFxRate, "USD")
+              : fx.convert(l.costBasis, l.currency, "USD")),
+          0
+        )
+      : fx.convert(nativeCost, asset.currency, "USD");
+
+  const goldCost = lots.reduce((s, l) => s + l.goldCost, 0);
+  const commission = lots.reduce((s, l) => s + l.commission, 0);
+  const tax = lots.reduce((s, l) => s + l.tax, 0);
+
+  return {
+    native: side(asset.value, nativeCost),
+    usd: side(usdValue, usdCost),
+    makingChargePct: makingChargePct(commission, tax, goldCost),
+    avgCostPerGram: weightedAvgCostPerGram(lots),
+  };
 }
 
 export type NetWorthSlice = {

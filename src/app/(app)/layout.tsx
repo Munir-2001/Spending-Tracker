@@ -12,6 +12,7 @@ import {
   getSettings,
   listAccounts,
   listAssets,
+  listAllLots,
   listBudgets,
   listCategories,
   listGoals,
@@ -36,6 +37,7 @@ export default async function AppLayout({
   let initialCategories: Awaited<ReturnType<typeof listCategories>> = [];
   let initialBudgets: Awaited<ReturnType<typeof listBudgets>> = [];
   let initialAssets: Awaited<ReturnType<typeof listAssets>> = [];
+  let initialLots: Awaited<ReturnType<typeof listAllLots>> = [];
   let initialGoals: Awaited<ReturnType<typeof listGoals>> = [];
   let initialRecurring: Awaited<ReturnType<typeof listRecurring>> = [];
   let initialSettings: Awaited<ReturnType<typeof getSettings>> = {
@@ -51,6 +53,7 @@ export default async function AppLayout({
       initialCategories,
       initialBudgets,
       initialAssets,
+      initialLots,
       initialGoals,
       initialRecurring,
       initialSettings,
@@ -61,6 +64,7 @@ export default async function AppLayout({
       listCategories(),
       listBudgets(),
       listAssets(),
+      listAllLots(),
       listGoals(),
       listRecurring(),
       getSettings(),
@@ -80,6 +84,7 @@ export default async function AppLayout({
         initialCategories={initialCategories}
         initialBudgets={initialBudgets}
         initialAssets={initialAssets}
+        initialLots={initialLots}
         initialGoals={initialGoals}
         initialRecurring={initialRecurring}
         initialSettings={initialSettings}

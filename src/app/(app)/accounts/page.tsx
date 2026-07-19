@@ -14,6 +14,7 @@ import {
   Pencil,
   Trash2,
   Scale,
+  Star,
 } from "lucide-react";
 
 import type { Account } from "@/lib/data";
@@ -51,6 +52,8 @@ export default function AccountsPage() {
     openEditAccount,
     deleteAccount,
     openAdjustBalance,
+    defaultAccountId,
+    setDefaultAccount,
     baseCurrency,
     fx,
   } = useAppData();
@@ -203,6 +206,10 @@ export default function AccountsPage() {
                           key={c.id}
                           account={c}
                           balance={balanceOf(c.id)}
+                          isDefault={c.id === defaultAccountId}
+                          onToggleDefault={() =>
+                            setDefaultAccount(c.id === defaultAccountId ? null : c.id)
+                          }
                           onEdit={() => openEditAccount(c)}
                           onDelete={() => confirmDelete(c)}
                           onAdjust={() => openAdjustBalance(c)}
@@ -224,6 +231,10 @@ export default function AccountsPage() {
                     <AccountRow
                       account={node}
                       balance={balanceOf(node.id)}
+                      isDefault={node.id === defaultAccountId}
+                      onToggleDefault={() =>
+                        setDefaultAccount(node.id === defaultAccountId ? null : node.id)
+                      }
                       onEdit={() => openEditAccount(node)}
                       onDelete={() => confirmDelete(node)}
                       onAdjust={() => openAdjustBalance(node)}
@@ -242,12 +253,16 @@ export default function AccountsPage() {
 function AccountRow({
   account,
   balance,
+  isDefault,
+  onToggleDefault,
   onEdit,
   onDelete,
   onAdjust,
 }: {
   account: Account;
   balance: number;
+  isDefault: boolean;
+  onToggleDefault: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onAdjust: () => void;
@@ -260,7 +275,15 @@ function AccountRow({
         <Icon className="size-4" />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium leading-tight">{account.name}</p>
+        <p className="flex items-center gap-1.5 truncate text-sm font-medium leading-tight">
+          {account.name}
+          {isDefault && (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+              <Star className="size-2.5 fill-current" />
+              Default
+            </span>
+          )}
+        </p>
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {account.institution ? `${account.institution} · ` : ""}
           <span className="num">{account.currency}</span>
@@ -278,7 +301,13 @@ function AccountRow({
       >
         {formatMoney(balance, { currency: account.currency })}
       </p>
-      <RowMenu onEdit={onEdit} onDelete={onDelete} onAdjust={onAdjust} />
+      <RowMenu
+        onEdit={onEdit}
+        onDelete={onDelete}
+        onAdjust={onAdjust}
+        isDefault={isDefault}
+        onToggleDefault={onToggleDefault}
+      />
     </div>
   );
 }
@@ -287,10 +316,14 @@ function RowMenu({
   onEdit,
   onDelete,
   onAdjust,
+  isDefault,
+  onToggleDefault,
 }: {
   onEdit: () => void;
   onDelete: () => void;
   onAdjust?: () => void;
+  isDefault?: boolean;
+  onToggleDefault?: () => void;
 }) {
   return (
     <DropdownMenu>
@@ -305,6 +338,12 @@ function RowMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
+        {onToggleDefault && (
+          <DropdownMenuItem onClick={onToggleDefault}>
+            <Star className={cn("size-4", isDefault && "fill-current")} />
+            {isDefault ? "Remove as default" : "Set as default"}
+          </DropdownMenuItem>
+        )}
         {onAdjust && (
           <DropdownMenuItem onClick={onAdjust}>
             <Scale className="size-4" />

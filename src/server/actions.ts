@@ -13,6 +13,8 @@ import {
   DEMO_USER_ID,
   type AccountRow,
   type AssetRow,
+  type AssetLotRow,
+  type NewAssetLotInput,
   type BudgetRow,
   type CategoryRow,
   type GoalRow,
@@ -32,6 +34,7 @@ import {
 import type {
   Account,
   Asset,
+  AssetLot,
   Budget,
   Category,
   Goal,
@@ -40,8 +43,8 @@ import type {
   TransactionItem,
 } from "@/lib/data";
 import { DEFAULT_BASE_CURRENCY, DEFAULT_RATES, toMinorUnits } from "@/lib/currency";
-import { goldValueMajor } from "@/lib/gold";
-import { getGoldQuote } from "@/server/prices";
+import { goldValueMajor, gramsOf, GRAMS_PER_UNIT } from "@/lib/gold";
+import { getUsdGoldQuote } from "@/server/prices";
 
 /** The current authenticated user's id (or the demo user in local mode). */
 async function getUserId(): Promise<string> {
@@ -233,6 +236,32 @@ export async function createAsset(raw: NewAssetInput): Promise<Asset> {
     updated_at: now,
   };
   await db.insert("assets", row);
+  // For a gold holding, record the opening purchase as its first lot so the
+  // asset never exists without a lot backing its cost basis.
+  if (input.symbol === "XAU" && input.firstLot && input.quantity && input.unit) {
+    const { rates } = await getSettings();
+    const fl = input.firstLot;
+    const lot: AssetLotRow = {
+      id: randomUUID(),
+      user_id: userId,
+      org_id: null,
+      asset_id: row.id,
+      date: fl.date,
+      quantity: input.quantity,
+      unit: input.unit,
+      karat: input.karat ?? null,
+      gold_cost: fl.goldCost,
+      commission: fl.commission,
+      tax: fl.tax,
+      cost_basis: fl.goldCost + fl.commission + fl.tax,
+      currency: input.currency,
+      purchase_fx_rate: rates[input.currency] ?? null,
+      note: null,
+      created_at: now,
+      updated_at: now,
+    };
+    await db.insert("asset_lots", lot);
+  }
   revalidateAssetViews();
   return assetToUi(row);
 }
@@ -264,45 +293,229 @@ export async function deleteAsset(id: string): Promise<void> {
 
 /**
  * Re-price every market-priced (gold) asset from the live spot and persist the
- * new market value. Returns the refreshed assets, when they were priced, and
- * whether a live fetch actually happened (false = no API key / offline, values
- * are last-known). Safe to call with no gold assets.
+ * new market value. We fetch the international XAU/USD spot once and convert
+ * into each holding's own currency using the user's FX rates — so gold is
+ * benchmarked in USD and the user controls the conversion. Values each purchase
+ * lot individually so mixed-karat holdings price correctly.
+ *
+ * Returns the refreshed assets, when they were priced, whether a live fetch
+ * happened (false = no API key / offline, values are last-known), and the raw
+ * USD per-gram price so the client can show exact USD P/L without a round-trip.
+ * Safe to call with no gold assets.
  */
-export async function refreshGoldPrices(): Promise<{
+export async function refreshGoldPrices(force = false): Promise<{
   assets: Asset[];
   pricedAt: string | null;
   live: boolean;
+  usdGram: number | null;
 }> {
   const rows = await db.selectAll("assets");
   const gold = rows.filter(
     (r) => r.symbol === "XAU" && r.quantity && r.quantity > 0 && r.unit
   );
   if (gold.length === 0)
-    return { assets: rows.map(assetToUi), pricedAt: null, live: false };
+    return { assets: rows.map(assetToUi), pricedAt: null, live: false, usdGram: null };
 
-  let pricedAt: string | null = null;
-  let live = false;
-  const quotes = new Map<string, Awaited<ReturnType<typeof getGoldQuote>>>();
+  const usd = await getUsdGoldQuote(force);
+  // No key / offline / bad response → keep last-known values.
+  if (!usd)
+    return { assets: rows.map(assetToUi), pricedAt: null, live: false, usdGram: null };
 
-  for (const r of gold) {
-    if (!quotes.has(r.currency))
-      quotes.set(r.currency, await getGoldQuote(r.currency));
-    const quote = quotes.get(r.currency);
-    if (!quote) continue;
-    const major = goldValueMajor(r.quantity!, r.unit!, r.karat, quote.gram24k);
-    const value = toMinorUnits(major, r.currency);
-    await db.update("assets", r.id, {
-      value,
-      updated_at: new Date().toISOString(),
-    });
-    pricedAt = quote.at;
-    // Priced within the last minute ⇒ this call fetched it fresh.
-    if (Date.now() - Date.parse(quote.at) < 60_000) live = true;
+  const { rates } = await getSettings();
+  const usdRate = rates.USD ?? 1;
+
+  // Load all lots once, grouped by asset, so mixed-karat holdings value right.
+  const allLots = await db.selectAll("asset_lots");
+  const lotsByAsset = new Map<string, AssetLotRow[]>();
+  for (const l of allLots) {
+    const arr = lotsByAsset.get(l.asset_id) ?? [];
+    arr.push(l);
+    lotsByAsset.set(l.asset_id, arr);
   }
 
+  const now = new Date().toISOString();
+  for (const r of gold) {
+    // USD spot → per-gram 24k price in the asset's own currency (via the
+    // numeraire, same math as convertWithRates applied to a per-gram amount).
+    const gramPrice = (usd.gram24k * usdRate) / (rates[r.currency] ?? 1);
+    const lots = lotsByAsset.get(r.id) ?? [];
+    let major = 0;
+    if (lots.length > 0) {
+      for (const l of lots) major += goldValueMajor(l.quantity, l.unit, l.karat, gramPrice);
+    } else {
+      major = goldValueMajor(r.quantity!, r.unit!, r.karat, gramPrice);
+    }
+    await db.update("assets", r.id, { value: toMinorUnits(major, r.currency), updated_at: now });
+  }
+
+  // Fetched within the last minute ⇒ this call hit the API (not just cache).
+  const live = Date.now() - Date.parse(usd.at) < 60_000;
   revalidateAssetViews();
   const updated = await db.selectAll("assets");
-  return { assets: updated.map(assetToUi), pricedAt, live };
+  return { assets: updated.map(assetToUi), pricedAt: usd.at, live, usdGram: usd.gram24k };
+}
+
+// ── Asset lots (per-purchase gold) ───────────────────────────────────────────
+function lotToUi(r: AssetLotRow): AssetLot {
+  return {
+    id: r.id,
+    assetId: r.asset_id,
+    date: r.date,
+    quantity: r.quantity,
+    unit: r.unit,
+    karat: r.karat ?? null,
+    goldCost: r.gold_cost,
+    commission: r.commission,
+    tax: r.tax,
+    costBasis: r.cost_basis,
+    currency: r.currency,
+    purchaseFxRate: r.purchase_fx_rate ?? null,
+    note: dec(r.note),
+  };
+}
+
+/**
+ * Local (file) mode has no SQL migration runner, so backfill a single lot for
+ * any pre-existing gold asset that has none. Idempotent; no-op in Supabase mode
+ * (the 0005 migration handles that there).
+ */
+async function ensureLotsForGold(): Promise<void> {
+  if (SUPABASE_CONFIGURED) return;
+  const assets = await db.selectAll("assets");
+  const gold = assets.filter(
+    (a) => a.symbol === "XAU" && a.quantity && a.quantity > 0 && a.unit
+  );
+  if (gold.length === 0) return;
+  const lots = await db.selectAll("asset_lots");
+  const haveLot = new Set(lots.map((l) => l.asset_id));
+  const userId = await getUserId();
+  const now = new Date().toISOString();
+  for (const a of gold) {
+    if (haveLot.has(a.id)) continue;
+    const lot: AssetLotRow = {
+      id: randomUUID(),
+      user_id: userId,
+      org_id: null,
+      asset_id: a.id,
+      date: (a.created_at ?? now).slice(0, 10),
+      quantity: a.quantity!,
+      unit: a.unit!,
+      karat: a.karat ?? null,
+      gold_cost: a.cost_basis ?? 0,
+      commission: 0,
+      tax: 0,
+      cost_basis: a.cost_basis ?? 0,
+      currency: a.currency,
+      purchase_fx_rate: null,
+      note: null,
+      created_at: now,
+      updated_at: now,
+    };
+    await db.insert("asset_lots", lot);
+  }
+}
+
+export async function listAllLots(): Promise<AssetLot[]> {
+  await ensureLotsForGold();
+  const rows = await db.selectAll("asset_lots");
+  return rows.map(lotToUi);
+}
+
+export async function listLots(assetId: string): Promise<AssetLot[]> {
+  v.idInput.parse(assetId);
+  const rows = await db.selectWhere("asset_lots", { asset_id: assetId });
+  return rows.map(lotToUi);
+}
+
+/**
+ * Recompute a gold asset's aggregate quantity + cost basis from its lots. Sums
+ * quantity in grams (never across raw units) and stores it back as tola; carries
+ * the most-recent lot's karat as representative. `value` is set to cost basis as
+ * a provisional floor — the live-price refresh overwrites it.
+ */
+async function recomputeAssetFromLots(assetId: string): Promise<void> {
+  const lots = await db.selectWhere("asset_lots", { asset_id: assetId });
+  const now = new Date().toISOString();
+  if (lots.length === 0) {
+    await db.update("assets", assetId, { quantity: 0, cost_basis: 0, updated_at: now });
+    return;
+  }
+  const totalGrams = lots.reduce((s, l) => s + gramsOf(l.quantity, l.unit), 0);
+  const costBasis = lots.reduce((s, l) => s + l.cost_basis, 0);
+  const latest = [...lots].sort((a, b) =>
+    a.date < b.date ? 1 : a.date > b.date ? -1 : a.created_at < b.created_at ? 1 : -1
+  )[0];
+  await db.update("assets", assetId, {
+    quantity: totalGrams / GRAMS_PER_UNIT.tola,
+    unit: "tola",
+    karat: latest.karat ?? null,
+    cost_basis: costBasis,
+    value: costBasis,
+    updated_at: now,
+  });
+}
+
+export async function createAssetLot(raw: NewAssetLotInput): Promise<AssetLot> {
+  const input = v.assetLotInput.parse(raw) as NewAssetLotInput;
+  const userId = await getUserId();
+  const now = new Date().toISOString();
+  const { rates } = await getSettings();
+  const row: AssetLotRow = {
+    id: randomUUID(),
+    user_id: userId,
+    org_id: null,
+    asset_id: input.assetId,
+    date: input.date,
+    quantity: input.quantity,
+    unit: input.unit,
+    karat: input.karat,
+    gold_cost: input.goldCost,
+    commission: input.commission,
+    tax: input.tax,
+    cost_basis: input.goldCost + input.commission + input.tax,
+    currency: input.currency,
+    // Pin the FX rate at purchase so USD P/L isolates gold movement, not PKR drift.
+    purchase_fx_rate: rates[input.currency] ?? null,
+    note: enc(input.note ?? null),
+    created_at: now,
+    updated_at: now,
+  };
+  await db.insert("asset_lots", row);
+  await recomputeAssetFromLots(input.assetId);
+  revalidateAssetViews();
+  return lotToUi(row);
+}
+
+export async function updateAssetLot(
+  id: string,
+  raw: NewAssetLotInput
+): Promise<AssetLot | null> {
+  const input = v.assetLotInput.parse(raw) as NewAssetLotInput;
+  v.idInput.parse(id);
+  const updated = await db.update("asset_lots", id, {
+    date: input.date,
+    quantity: input.quantity,
+    unit: input.unit,
+    karat: input.karat,
+    gold_cost: input.goldCost,
+    commission: input.commission,
+    tax: input.tax,
+    cost_basis: input.goldCost + input.commission + input.tax,
+    currency: input.currency,
+    note: enc(input.note ?? null),
+    updated_at: new Date().toISOString(),
+  });
+  if (updated) await recomputeAssetFromLots(updated.asset_id);
+  revalidateAssetViews();
+  return updated ? lotToUi(updated) : null;
+}
+
+export async function deleteAssetLot(id: string): Promise<void> {
+  v.idInput.parse(id);
+  const existing = await db.findById("asset_lots", id);
+  await db.remove("asset_lots", id);
+  if (existing) await recomputeAssetFromLots(existing.asset_id);
+  revalidateAssetViews();
 }
 
 function revalidateCategoryViews() {
@@ -855,6 +1068,8 @@ function revalidateTxnViews() {
 export type AppSettings = {
   baseCurrency: string;
   rates: Record<string, number>;
+  /** Preferred account, pre-selected when adding a transaction. */
+  defaultAccountId?: string | null;
 };
 
 /** Default the display currency to whichever currency the user uses most. */
@@ -879,14 +1094,18 @@ export async function getSettings(): Promise<AppSettings> {
     const saved = await db.readSettings<Partial<AppSettings>>();
     const rates = { ...DEFAULT_RATES, ...(saved?.rates ?? {}) };
     const baseCurrency = saved?.baseCurrency || (await defaultBaseCurrency());
-    return { baseCurrency, rates };
+    return { baseCurrency, rates, defaultAccountId: saved?.defaultAccountId ?? null };
   }
   const supabase = await createClient();
   const { data } = await supabase.from("user_settings").select("*").maybeSingle();
   const saved = data as UserSettingsRow | null;
   const rates = { ...DEFAULT_RATES, ...(saved?.rates ?? {}) };
   const baseCurrency = saved?.base_currency || (await defaultBaseCurrency());
-  return { baseCurrency, rates };
+  return {
+    baseCurrency,
+    rates,
+    defaultAccountId: saved?.default_account_id ?? null,
+  };
 }
 
 export async function updateSettings(raw: AppSettings): Promise<AppSettings> {
@@ -908,6 +1127,7 @@ export async function updateSettings(raw: AppSettings): Promise<AppSettings> {
     user_id: userId,
     base_currency: s.baseCurrency,
     rates: s.rates,
+    default_account_id: s.defaultAccountId ?? null,
     updated_at: new Date().toISOString(),
   });
   revalidatePath("/");

@@ -202,13 +202,17 @@ export function AddTransactionDialog({
       setRepayClaimId("");
       setToTarget("");
       // Seed with the user's default wallet (if it still exists), else the first.
+      // Set authoritatively (not `prev || …`) — a prior submit's reset() leaves a
+      // stale account in state, and `prev ||` would keep it instead of honoring
+      // the default wallet. This effect only runs on open, so it won't clobber
+      // a selection made while the dialog is already open.
       const seedId =
         (defaultAccountId && accountsById.has(defaultAccountId)
           ? defaultAccountId
           : selectable[0]?.id) || "";
-      setAccountId((prev) => prev || seedId);
+      setAccountId(seedId);
       setCurrency(accountsById.get(seedId)?.currency ?? "USD");
-      setCategoryId((prev) => prev || expenseCategories[0]?.id || "");
+      setCategoryId(expenseCategories[0]?.id || "");
     }
     // Initialize only when the dialog opens or a different transaction is loaded.
     // Must NOT depend on field state (accountId, etc.) — otherwise editing a field
@@ -254,8 +258,14 @@ export function AddTransactionDialog({
     setMerchant("");
     setAmount("");
     setCategoryId(expenseCategories[0]?.id ?? "");
-    setAccountId(selectable[0]?.id ?? "");
-    setCurrency(selectable[0]?.currency ?? "USD");
+    // Reset to the default wallet (not just the first account) so the next open
+    // starts on the wallet the user actually chose.
+    const seedId =
+      (defaultAccountId && accountsById.has(defaultAccountId)
+        ? defaultAccountId
+        : selectable[0]?.id) || "";
+    setAccountId(seedId);
+    setCurrency(accountsById.get(seedId)?.currency ?? "USD");
     setDate(today());
     setItemized(false);
     setItemRows([]);

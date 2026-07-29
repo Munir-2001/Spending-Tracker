@@ -58,7 +58,10 @@ export const accountInput = z.object({
 });
 
 const lineInput = z.object({
-  categoryId: idStr,
+  // May be "" for an uncategorized line (buildLines maps "" → null). Must match
+  // the parent's tolerance, otherwise editing a split with an uncategorized item
+  // throws a ZodError and the save silently fails.
+  categoryId: z.string().trim().max(64),
   description: z.string().trim().max(200),
   amount: intAmount,
   reimbursable: z.boolean().optional(),

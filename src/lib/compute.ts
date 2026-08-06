@@ -55,6 +55,129 @@ const inMonth = (iso: string, year: number, month: number) => {
 
 export type MonthFlows = { income: number; expense: number; net: number };
 
+/**
+ * Reduce a set of transactions to income / expense / net in base currency using
+ * true-spending semantics: transfers and reimbursement settlements are excluded
+ * (they move money / repay a receivable — not income or spending), and the
+ * reimbursable ("owed back") portion of an expense is netted out so `expense`
+ * reflects what you actually spent. `expense` is negative; `net = income + expense`.
+ */
+export function flowsOf(transactions: Transaction[], fx: Fx): MonthFlows {
+  let income = 0;
+  let expense = 0;
+  for (const t of transactions) {
+    if (t.isReimbursement || t.isTransfer) continue;
+    const own = t.reimbursement ? t.amount + t.reimbursement.amount : t.amount;
+    const base = fx.toBase(own, t.currency);
+    if (base > 0) income += base;
+    else expense += base; // negative
+  }
+  return { income, expense, net: income + expense };
+}
+
+/**
+ * Income / expense / net over an INCLUSIVE date range [from, to] (yyyy-mm-dd),
+ * in base currency. A `null` bound is open-ended (from=null → since the start;
+ * to=null → up to now). This is the "expenditure between two dates" helper —
+ * `expense` is the total spend in the window (negative). Uses {@link flowsOf}.
+ */
+export function rangeFlowsBase(
+  transactions: Transaction[],
+  from: string | null,
+  to: string | null,
+  fx: Fx
+): MonthFlows {
+  return flowsOf(
+    transactions.filter((t) => (!from || t.date >= from) && (!to || t.date <= to)),
+    fx
+  );
+}
+
+/** Real spend magnitude (base minor units, ≥0) of one transaction; 0 for income,
+ *  transfers, and reimbursement settlements. The owed portion of a reimbursable
+ *  expense is netted out, matching {@link flowsOf}. */
+export function spendMagnitude(t: Transaction, fx: Fx): number {
+  if (t.isReimbursement || t.isTransfer) return 0;
+  const own = t.reimbursement ? t.amount + t.reimbursement.amount : t.amount;
+  const base = fx.toBase(own, t.currency);
+  return base < 0 ? -base : 0;
+}
+
+export type SpendGranularity = "day" | "week" | "month";
+export type SpendBucket = {
+  key: string; // stable id (bucket start, or YYYY-MM for months)
+  start: string; // inclusive yyyy-mm-dd
+  end: string; // inclusive yyyy-mm-dd
+  spend: number; // base-currency minor units, ≥0
+};
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+const ymd = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const parseYmd = (iso: string) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d); // local parts → no UTC drift
+};
+
+/**
+ * Contiguous spend-per-bucket series spanning the first to the last spending
+ * transaction, at the given granularity — the data behind a brushable spend
+ * timeline. Buckets with no spend are included (value 0) so the x-axis stays
+ * continuous. Empty when there is no spending. Uses {@link spendMagnitude}.
+ */
+export function spendSeries(
+  transactions: Transaction[],
+  fx: Fx,
+  granularity: SpendGranularity
+): SpendBucket[] {
+  const spends: { date: string; spend: number }[] = [];
+  for (const t of transactions) {
+    const s = spendMagnitude(t, fx);
+    if (s > 0) spends.push({ date: t.date, spend: s });
+  }
+  if (spends.length === 0) return [];
+  const dates = spends.map((x) => x.date).sort();
+  const min = dates[0];
+  const max = dates[dates.length - 1];
+
+  const buckets: SpendBucket[] = [];
+  const end = parseYmd(max);
+  if (granularity === "month") {
+    let cur = new Date(parseYmd(min).getFullYear(), parseYmd(min).getMonth(), 1);
+    while (cur <= end) {
+      const y = cur.getFullYear();
+      const m = cur.getMonth();
+      buckets.push({
+        key: `${y}-${pad2(m + 1)}`,
+        start: ymd(new Date(y, m, 1)),
+        end: ymd(new Date(y, m + 1, 0)), // last day of month
+        spend: 0,
+      });
+      cur = new Date(y, m + 1, 1);
+    }
+  } else {
+    const step = granularity === "week" ? 7 : 1;
+    let cur = parseYmd(min);
+    while (cur <= end) {
+      const e = new Date(cur);
+      e.setDate(e.getDate() + step - 1);
+      buckets.push({ key: ymd(cur), start: ymd(cur), end: ymd(e), spend: 0 });
+      cur = new Date(cur);
+      cur.setDate(cur.getDate() + step);
+    }
+  }
+
+  // Assign each spend to its bucket (inclusive string-range compare).
+  for (const s of spends) {
+    for (const b of buckets) {
+      if (s.date >= b.start && s.date <= b.end) {
+        b.spend += s.spend;
+        break;
+      }
+    }
+  }
+  return buckets;
+}
+
 /** Income / expense / net for a given month, in base currency. */
 export function monthFlowsBase(
   transactions: Transaction[],
@@ -62,18 +185,10 @@ export function monthFlowsBase(
   month: number,
   fx: Fx
 ): MonthFlows {
-  let income = 0;
-  let expense = 0;
-  for (const t of transactions) {
-    if (!inMonth(t.date, year, month)) continue;
-    if (t.isReimbursement || t.isTransfer) continue; // settles a receivable / moves money — not income
-    // The reimbursable portion is owed back, so it isn't your spending.
-    const own = t.reimbursement ? t.amount + t.reimbursement.amount : t.amount;
-    const base = fx.toBase(own, t.currency);
-    if (base > 0) income += base;
-    else expense += base; // negative
-  }
-  return { income, expense, net: income + expense };
+  return flowsOf(
+    transactions.filter((t) => inMonth(t.date, year, month)),
+    fx
+  );
 }
 
 /** Total value of all assets, converted to base currency. */

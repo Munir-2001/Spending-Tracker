@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useAppData } from "@/components/transactions/transactions-provider";
+import { SpendTimeline } from "@/components/insights/spend-timeline";
 import { categoryLinesOf } from "@/lib/compute";
 import { formatMoney, formatCompact, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -150,8 +151,15 @@ export default function InsightsPage() {
         </div>
       </Reveal>
 
+      {/* Brushable spend explorer — drag the timeline to select a span */}
+      <Reveal delay={0.04}>
+        <div className="mt-8">
+          <SpendTimeline />
+        </div>
+      </Reveal>
+
       <Reveal delay={0.05}>
-        <div className="mt-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
           <Stat label="Income" value={fmt(income)} tone="income" />
           <Stat label="Spent" value={fmt(totalSpent)} tone="expense" />
           <Stat label="Saved" value={fmt(saved)} tone={saved >= 0 ? "income" : "expense"} />

@@ -29,6 +29,7 @@ import {
 import { Reveal } from "@/components/reveal";
 import { useAppData } from "@/components/transactions/transactions-provider";
 import { useConfirm } from "@/components/ui/confirm-dialog";
+import { flowsOf } from "@/lib/compute";
 import { formatFullDate, formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,7 @@ const PERIODS: { value: string; label: string }[] = [
   { value: "last-month", label: "Last month" },
   { value: "last-30", label: "Last 30 days" },
   { value: "this-year", label: "This year" },
+  { value: "custom", label: "Custom range" },
 ];
 
 /**
@@ -88,6 +90,9 @@ export default function TransactionsPage() {
   const [includeSubs, setIncludeSubs] = useState(true);
   const [account, setAccount] = useState("all");
   const [period, setPeriod] = useState("all");
+  // Custom from/to range (yyyy-mm-dd), used when period === "custom". Empty = open.
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
 
   // Category tree: top-level parents, and each parent's children.
   const parents = useMemo(
@@ -128,11 +133,13 @@ export default function TransactionsPage() {
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const [start, end] = periodBounds(period);
+    const custom = period === "custom";
+    const [start, end] = custom ? [from || null, to || null] : periodBounds(period);
     return items.filter((t) => {
-      // Time period (string compare on yyyy-mm-dd).
+      // Time period (string compare on yyyy-mm-dd). Presets use an exclusive end;
+      // a custom range is inclusive of both the From and To dates.
       if (start && t.date < start) return false;
-      if (end && t.date >= end) return false;
+      if (end && (custom ? t.date > end : t.date >= end)) return false;
       // Category — for a split, match if ANY line falls in the accepted set,
       // so e.g. a grocery split still shows under "Groceries".
       if (acceptedCats) {
@@ -145,18 +152,14 @@ export default function TransactionsPage() {
       if (q && !t.merchant.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [items, query, acceptedCats, account, period]);
+  }, [items, query, acceptedCats, account, period, from, to]);
 
-  // Mixed currencies → roll the summary up to the base currency.
+  // Mixed currencies → roll the summary up to the base currency. True-spending
+  // semantics (transfers / reimbursement settlements excluded, owed portions
+  // netted) so "Money out" is real expenditure for the selected range.
   const totals = useMemo(() => {
-    let income = 0;
-    let expense = 0;
-    for (const t of filtered) {
-      const base = fx.toBase(t.amount, t.currency);
-      if (base > 0) income += base;
-      else expense += base;
-    }
-    return { income, expense, net: income + expense, count: filtered.length };
+    const { income, expense, net } = flowsOf(filtered, fx);
+    return { income, expense, net, count: filtered.length };
   }, [filtered, fx]);
 
   return (
@@ -224,6 +227,27 @@ export default function TransactionsPage() {
                 ))}
               </SelectContent>
             </Select>
+            {period === "custom" && (
+              <div className="flex items-center gap-2">
+                <Input
+                  type="date"
+                  value={from}
+                  max={to || undefined}
+                  onChange={(e) => setFrom(e.target.value)}
+                  aria-label="From date"
+                  className="num w-full sm:w-40"
+                />
+                <span className="shrink-0 text-xs text-muted-foreground">to</span>
+                <Input
+                  type="date"
+                  value={to}
+                  min={from || undefined}
+                  onChange={(e) => setTo(e.target.value)}
+                  aria-label="To date"
+                  className="num w-full sm:w-40"
+                />
+              </div>
+            )}
             <Select value={category} onValueChange={setCategory}>
               <SelectTrigger className="w-full sm:w-48">
                 <SelectValue placeholder="Category" />

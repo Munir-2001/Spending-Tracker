@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { GRAMS_PER_UNIT } from "@/lib/gold";
-import { CURRENCIES } from "@/lib/currency";
+import { fxFromPerUsd } from "@/lib/fx";
 
 /**
  * Live gold spot price (per-gram 24k, in USD), cached to disk with a 12h TTL.
@@ -41,7 +41,14 @@ function sane(n: unknown, max: number): number | null {
 const MAX_OZT = 1_000_000; // USD per troy ounce
 const MAX_GRAM = 1_000_000; // USD per gram
 const MAX_COIN_USD = 100_000_000; // USD per coin
-const MAX_FX_PER_USD = 1e9; // units of a currency per 1 USD
+
+// Hard ceiling on any single upstream request so a hanging or very slow external
+// API can't stall the serverless function — it aborts, and the caller's existing
+// try/catch degrades to the last-known cached value.
+const FETCH_TIMEOUT_MS = 8000;
+function timedFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+}
 
 // Prefer the project's /data dir (local mode); fall back to tmp on read-only
 // serverless filesystems.
@@ -81,7 +88,7 @@ type SwissquoteQuote = {
 /** Free public XAU/USD feed (per troy ounce) → USD per-gram 24k. Null on failure. */
 async function fetchSwissquoteGram(): Promise<number | null> {
   try {
-    const res = await fetch(SWISSQUOTE_URL, {
+    const res = await timedFetch(SWISSQUOTE_URL, {
       headers: { Accept: "application/json", "User-Agent": "Ledger/1.0" },
       cache: "no-store",
     });
@@ -110,7 +117,7 @@ async function fetchGoldApiGram(currency: string): Promise<number | null> {
   const token = process.env.GOLD_API_KEY;
   if (!token) return null;
   try {
-    const res = await fetch(`https://www.goldapi.io/api/XAU/${currency.toUpperCase()}`, {
+    const res = await timedFetch(`https://www.goldapi.io/api/XAU/${currency.toUpperCase()}`, {
       headers: { "x-access-token": token, "Content-Type": "application/json" },
       cache: "no-store",
     });
@@ -153,53 +160,85 @@ export async function getUsdGoldQuote(force = false): Promise<GoldQuote | null> 
 
 /**
  * Live FX rates as "USD value of 1 unit of currency" — our numeraire convention
- * — for the currencies the app supports. Source: open.er-api.com (free, no key),
- * whose rates are units-per-USD, so we invert (1 / rate). Cached like the metal
- * spot; `force` bypasses the cache. Falls back to the last-known cached rates on
- * any failure (caller then layers its own defaults under these).
+ * — for the currencies the app supports. Primary source is open.er-api.com (free,
+ * no key); if it's unreachable we fall back to Fawaz Ahmed's currency-api (free,
+ * no key, CDN-hosted). Both return units-per-USD, which `fxFromPerUsd` inverts
+ * and sanitizes. Cached like the metal spot; `force` bypasses the cache. Falls
+ * back to the last-known cached rates when BOTH sources fail (the caller then
+ * layers its own defaults under these).
  */
 export async function getFxRatesUsd(force = false): Promise<Record<string, number>> {
+  const cache = await readCache();
   const cachedRates = (): Record<string, number> => {
     const out: Record<string, number> = {};
     for (const k of Object.keys(cache))
       if (k.startsWith("FX:") && k !== "FX:__at__") out[k.slice(3)] = cache[k].gram24k;
     return out;
   };
-  const cache = await readCache();
   const at = cache["FX:__at__"];
   if (!force && at && Date.now() - Date.parse(at.at) < TTL_MS) return cachedRates();
 
+  // Primary → fallback. Each returns a raw units-per-USD map (or null on failure).
+  const perUsd = (await fetchErApiRates()) ?? (await fetchFawazRates());
+  if (!perUsd) return cachedRates(); // both sources down → keep last-known
+
+  const out = fxFromPerUsd(perUsd);
+  const stamp = new Date().toISOString();
+  for (const [code, usdPerUnit] of Object.entries(out)) {
+    if (code === "USD") continue;
+    cache[`FX:${code}`] = { gram24k: usdPerUnit, currency: code, at: stamp };
+  }
+  cache["FX:__at__"] = { gram24k: 1, currency: "USD", at: stamp };
   try {
-    const res = await fetch("https://open.er-api.com/v6/latest/USD", {
+    await writeCache(cache);
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
+
+/** open.er-api.com → raw units-per-USD map (UPPERCASE codes), or null on failure. */
+async function fetchErApiRates(): Promise<Record<string, unknown> | null> {
+  try {
+    const res = await timedFetch("https://open.er-api.com/v6/latest/USD", {
       headers: { Accept: "application/json" },
       cache: "no-store",
     });
-    if (!res.ok) return cachedRates();
+    if (!res.ok) return null;
     const data = (await res.json()) as { result?: unknown; rates?: unknown };
     if (data?.result !== "success" || !data.rates || typeof data.rates !== "object")
-      return cachedRates(); // unexpected / error shape → keep last-known
-    const rates = data.rates as Record<string, unknown>;
-    const stamp = new Date().toISOString();
-    const out: Record<string, number> = { USD: 1 };
-    for (const { code } of CURRENCIES) {
-      if (code === "USD") continue;
-      const perUsd = sane(rates[code], MAX_FX_PER_USD);
-      if (perUsd != null) {
-        const usdPerUnit = 1 / perUsd;
-        out[code] = usdPerUnit;
-        cache[`FX:${code}`] = { gram24k: usdPerUnit, currency: code, at: stamp };
-      }
-    }
-    cache["FX:__at__"] = { gram24k: 1, currency: "USD", at: stamp };
-    try {
-      await writeCache(cache);
-    } catch {
-      /* ignore */
-    }
-    return out;
+      return null; // unexpected / error shape
+    return data.rates as Record<string, unknown>;
   } catch {
-    return cachedRates();
+    return null;
   }
+}
+
+/**
+ * Fawaz Ahmed's currency-api (free, no key, CDN) → raw units-per-USD map
+ * (lowercase codes), or null. Shape: `{ date, usd: { eur: 0.9, pkr: 278, … } }`.
+ * Tries the jsDelivr host, then the Cloudflare Pages mirror.
+ */
+async function fetchFawazRates(): Promise<Record<string, unknown> | null> {
+  const urls = [
+    "https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/usd.min.json",
+    "https://latest.currency-api.pages.dev/v1/currencies/usd.min.json",
+  ];
+  for (const url of urls) {
+    try {
+      const res = await timedFetch(url, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!res.ok) continue;
+      const data = (await res.json()) as { usd?: unknown };
+      if (data.usd && typeof data.usd === "object")
+        return data.usd as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 /**
@@ -227,7 +266,7 @@ export async function getCryptoPricesUsd(
   if (missing.length === 0) return out;
 
   try {
-    const res = await fetch(
+    const res = await timedFetch(
       `https://api.coingecko.com/api/v3/simple/price?ids=${missing
         .map(encodeURIComponent)
         .join(",")}&vs_currencies=usd`,

@@ -41,7 +41,7 @@ export default function ReportsPage() {
     let income = 0;
     const expenseByCat = new Map<string, number>();
     for (const t of items) {
-      if (!inPeriod(t.date) || t.isReimbursement || t.isTransfer) continue;
+      if (!inPeriod(t.date) || t.isReimbursement || t.isTransfer || t.notIncome) continue;
       if (t.amount > 0) income += fx.toBase(t.amount, t.currency);
       const split = Boolean(t.items?.length);
       for (const line of categoryLinesOf(t)) {

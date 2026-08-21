@@ -73,7 +73,7 @@ export default function InsightsPage() {
     const leaf = new Map<string, number>();
     let income = 0;
     for (const t of items) {
-      if (!inPeriod(t.date) || t.isReimbursement || t.isTransfer) continue;
+      if (!inPeriod(t.date) || t.isReimbursement || t.isTransfer || t.notIncome) continue;
       if (t.amount > 0) income += fx.toBase(t.amount, t.currency);
       const split = Boolean(t.items?.length);
       for (const line of categoryLinesOf(t)) {

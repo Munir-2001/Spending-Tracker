@@ -131,6 +131,8 @@ export function AddTransactionDialog({
   const [reimbNote, setReimbNote] = useState("");
   const [repayOn, setRepayOn] = useState(false);
   const [repayClaimId, setRepayClaimId] = useState("");
+  // An inflow the user marks as not real income (refund, gift, transfer in).
+  const [notIncomeOn, setNotIncomeOn] = useState(false);
   // Transfer destination, encoded as "acc:<id>" or "ast:<id>".
   const [toTarget, setToTarget] = useState("");
 
@@ -191,6 +193,7 @@ export function AddTransactionDialog({
       setRepayOn(false);
       setRepayClaimId("");
       setToTarget("");
+      setNotIncomeOn(!!editing.notIncome);
     } else {
       setItemized(false);
       setItemRows([]);
@@ -201,6 +204,7 @@ export function AddTransactionDialog({
       setRepayOn(false);
       setRepayClaimId("");
       setToTarget("");
+      setNotIncomeOn(false);
       // Seed with the user's default wallet (if it still exists), else the first.
       // Set authoritatively (not `prev || …`) — a prior submit's reset() leaves a
       // stale account in state, and `prev ||` would keep it instead of honoring
@@ -276,6 +280,7 @@ export function AddTransactionDialog({
     setRepayOn(false);
     setRepayClaimId("");
     setToTarget("");
+    setNotIncomeOn(false);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -390,6 +395,8 @@ export function AddTransactionDialog({
         currency,
         date,
       };
+
+      if (kind === "income") input.notIncome = notIncomeOn;
 
       if (useReimb) {
         const owedMajor = Number.parseFloat(reimbAmount);
@@ -737,6 +744,40 @@ export function AddTransactionDialog({
                 </div>
               )}
             </div>
+
+            {/* Don't-count-as-income toggle (income only, not a repayment) */}
+            {kind === "income" && !useRepay && (
+              <button
+                type="button"
+                onClick={() => setNotIncomeOn((v) => !v)}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors",
+                  notIncomeOn
+                    ? "border-primary/30 bg-primary/5"
+                    : "border-border/60 hover:bg-muted/50"
+                )}
+              >
+                <span className="font-medium">
+                  Don&apos;t count as income{" "}
+                  <span className="font-normal text-muted-foreground">
+                    (refund, gift, transfer in)
+                  </span>
+                </span>
+                <span
+                  className={cn(
+                    "flex h-5 w-9 items-center rounded-full p-0.5 transition-colors",
+                    notIncomeOn ? "bg-primary" : "bg-muted-foreground/30"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "size-4 rounded-full bg-background transition-transform",
+                      notIncomeOn && "translate-x-4"
+                    )}
+                  />
+                </span>
+              </button>
+            )}
 
             {/* Itemize toggle (expenses only, not while reimbursing) */}
             {kind === "expense" && !reimbOn && (

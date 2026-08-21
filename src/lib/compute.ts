@@ -66,7 +66,7 @@ export function flowsOf(transactions: Transaction[], fx: Fx): MonthFlows {
   let income = 0;
   let expense = 0;
   for (const t of transactions) {
-    if (t.isReimbursement || t.isTransfer) continue;
+    if (t.isReimbursement || t.isTransfer || t.notIncome) continue;
     const own = t.reimbursement ? t.amount + t.reimbursement.amount : t.amount;
     const base = fx.toBase(own, t.currency);
     if (base > 0) income += base;
@@ -97,7 +97,7 @@ export function rangeFlowsBase(
  *  transfers, and reimbursement settlements. The owed portion of a reimbursable
  *  expense is netted out, matching {@link flowsOf}. */
 export function spendMagnitude(t: Transaction, fx: Fx): number {
-  if (t.isReimbursement || t.isTransfer) return 0;
+  if (t.isReimbursement || t.isTransfer || t.notIncome) return 0;
   const own = t.reimbursement ? t.amount + t.reimbursement.amount : t.amount;
   const base = fx.toBase(own, t.currency);
   return base < 0 ? -base : 0;
@@ -569,7 +569,7 @@ export function wrappedStats(
   const byId = new Map(categories.map((c) => [c.id, c]));
   const prefix = `${year}-${String(month + 1).padStart(2, "0")}`;
   const rows = transactions.filter(
-    (t) => !t.isTransfer && !t.isReimbursement && t.date.startsWith(prefix)
+    (t) => !t.isTransfer && !t.isReimbursement && !t.notIncome && t.date.startsWith(prefix)
   );
 
   let totalSpent = 0;

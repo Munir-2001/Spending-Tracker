@@ -100,6 +100,8 @@ export type Transaction = {
   isReimbursement?: boolean;
   /** True for a leg of a transfer between accounts/assets (not income/expense). */
   isTransfer?: boolean;
+  /** Manual flag: an inflow the user marked as never counting toward income. */
+  notIncome?: boolean;
   /** For a repayment inflow: the id of the reimbursable transaction it settles. */
   settlesId?: string;
   /** Free-text note (transfer memo, refund reference, etc.). */

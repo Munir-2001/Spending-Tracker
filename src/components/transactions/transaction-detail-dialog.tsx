@@ -87,6 +87,11 @@ export function TransactionDetailDialog({
                 Transfer · not income/expense
               </span>
             )}
+            {t.notIncome && !t.isReimbursement && !t.isTransfer && (
+              <span className="rounded bg-income/10 px-1.5 py-px text-[10px] font-medium text-income">
+                Not income
+              </span>
+            )}
           </div>
         </div>
 

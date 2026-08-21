@@ -75,6 +75,7 @@ export const transactionInput = z.object({
   currency,
   date: isoDate,
   items: z.array(lineInput).max(100).optional(),
+  notIncome: z.boolean().optional(),
   reimbursement: z
     .object({
       person: z.string().trim().max(120),

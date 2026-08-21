@@ -88,6 +88,8 @@ export type TransactionRow = {
   is_reimbursement: boolean;
   // True for both legs of a transfer between accounts/assets (not income/expense).
   is_transfer: boolean;
+  // User flag: an inflow that should never count as income (refund, gift, …).
+  not_income: boolean;
   // For a repayment inflow: the reimbursable transaction it settles.
   settles_id: string | null;
   created_at: string;
@@ -277,6 +279,8 @@ export type NewTransactionInput = {
   items?: NewTransactionLine[];
   /** When present, marks this expense as reimbursable ("bought for a friend"). */
   reimbursement?: { person: string; amount: number; note: string };
+  /** Manual flag: this inflow should never count as income (refund, gift, …). */
+  notIncome?: boolean;
 };
 
 /** Input for moving money between an account and another account or asset. */

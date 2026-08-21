@@ -176,6 +176,7 @@ function transactionToUi(
         : undefined,
     isReimbursement: r.is_reimbursement ?? false,
     isTransfer: r.is_transfer ?? false,
+    notIncome: r.not_income ?? false,
     settlesId: r.settles_id ?? undefined,
     notes: dec(r.notes) ?? undefined,
   };
@@ -190,6 +191,7 @@ const noReimburse = {
   reimburse_settled_at: null,
   is_reimbursement: false,
   is_transfer: false,
+  not_income: false,
   settles_id: null,
 } as const;
 
@@ -797,6 +799,7 @@ export async function createTransaction(
     reimburse_person: enc(input.reimbursement?.person ?? null),
     reimburse_amount: input.reimbursement?.amount ?? 0,
     reimburse_note: enc(input.reimbursement?.note ?? null),
+    not_income: input.notIncome ?? false,
     created_at: now,
     updated_at: now,
   };
@@ -834,6 +837,7 @@ export async function updateTransaction(
     reimburse_person: enc(input.reimbursement?.person ?? null),
     reimburse_amount: input.reimbursement?.amount ?? 0,
     reimburse_note: enc(input.reimbursement?.note ?? null),
+    not_income: input.notIncome ?? false,
     updated_at: now,
   });
   revalidateTxnViews();

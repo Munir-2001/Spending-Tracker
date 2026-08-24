@@ -57,6 +57,9 @@ export async function updateSession(
   // scrapers, so they must never be redirected to the landing.
   const isPublicRoute =
     path === "/" ||
+    // Cron routes authenticate themselves with CRON_SECRET (no user session),
+    // so they must bypass the login redirect.
+    path.startsWith("/api/cron") ||
     path.startsWith("/auth") ||
     path.startsWith("/privacy") ||
     path.startsWith("/terms") ||

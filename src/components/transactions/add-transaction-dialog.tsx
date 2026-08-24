@@ -135,6 +135,8 @@ export function AddTransactionDialog({
   const [notIncomeOn, setNotIncomeOn] = useState(false);
   // Transfer destination, encoded as "acc:<id>" or "ast:<id>".
   const [toTarget, setToTarget] = useState("");
+  // Transfer source, encoded as "acc:<id>" or "ast:<id>" (accounts or assets).
+  const [fromTarget, setFromTarget] = useState("");
 
   const blankItem = (): ItemRow => ({
     key: keyGen(),
@@ -215,6 +217,7 @@ export function AddTransactionDialog({
           ? defaultAccountId
           : selectable[0]?.id) || "";
       setAccountId(seedId);
+      setFromTarget(seedId ? `acc:${seedId}` : "");
       setCurrency(accountsById.get(seedId)?.currency ?? "USD");
       setCategoryId(expenseCategories[0]?.id || "");
     }
@@ -229,19 +232,46 @@ export function AddTransactionDialog({
   const useItems = itemized && kind === "expense";
   const useReimb = reimbOn && kind === "expense" && !useItems;
   const useRepay = repayOn && kind === "income" && !isEditing;
-  // Possible transfer destinations: other accounts + assets.
-  const toOptions = useMemo(
+  // Transfer source: any account or asset.
+  const fromOptions = useMemo(
     () => [
-      ...selectable
-        .filter((a) => a.id !== accountId)
-        .map((a) => ({ value: `acc:${a.id}`, label: a.name, sub: a.currency })),
+      ...selectable.map((a) => ({
+        value: `acc:${a.id}`,
+        label: a.name,
+        sub: a.currency,
+      })),
       ...assets.map((a) => ({
         value: `ast:${a.id}`,
         label: a.name,
         sub: `asset · ${a.currency}`,
       })),
     ],
-    [selectable, assets, accountId]
+    [selectable, assets]
+  );
+  // Parsed source (transfer mode) + its currency.
+  const [fromKind, fromId] =
+    fromTarget.split(":").length === 2
+      ? [fromTarget.startsWith("ast:") ? "asset" : "account", fromTarget.split(":")[1]]
+      : ["account", ""];
+  const fromCurrency =
+    fromKind === "asset"
+      ? assets.find((a) => a.id === fromId)?.currency
+      : accountsById.get(fromId)?.currency;
+  // Possible transfer destinations: everything except the chosen source.
+  const toOptions = useMemo(
+    () => [
+      ...selectable
+        .filter((a) => `acc:${a.id}` !== fromTarget)
+        .map((a) => ({ value: `acc:${a.id}`, label: a.name, sub: a.currency })),
+      ...assets
+        .filter((a) => `ast:${a.id}` !== fromTarget)
+        .map((a) => ({
+          value: `ast:${a.id}`,
+          label: a.name,
+          sub: `asset · ${a.currency}`,
+        })),
+    ],
+    [selectable, assets, fromTarget]
   );
   const itemsTotal = itemRows.reduce(
     (s, r) => s + (Number.parseFloat(r.amount) || 0),
@@ -269,6 +299,7 @@ export function AddTransactionDialog({
         ? defaultAccountId
         : selectable[0]?.id) || "";
     setAccountId(seedId);
+    setFromTarget(seedId ? `acc:${seedId}` : "");
     setCurrency(accountsById.get(seedId)?.currency ?? "USD");
     setDate(today());
     setItemized(false);
@@ -286,25 +317,30 @@ export function AddTransactionDialog({
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
 
-    // Transfer: move money between an account and another account/asset.
+    // Transfer: move money between accounts and/or assets (either side can be
+    // an account or an asset).
     if (transferMode) {
-      if (!accountId) return toast.error("Choose the account to transfer from.");
+      if (!fromTarget) return toast.error("Choose what to transfer from.");
       if (!toTarget) return toast.error("Choose where to transfer to.");
+      if (fromTarget === toTarget)
+        return toast.error("Source and destination must be different.");
       const major = Number.parseFloat(amount);
       if (!Number.isFinite(major) || major <= 0)
         return toast.error("Enter an amount greater than zero.");
-      const [k, id] = toTarget.split(":");
-      const toKind = k === "ast" ? "asset" : "account";
+      const [tk, toId] = toTarget.split(":");
+      const toKind = tk === "ast" ? "asset" : "account";
+      const srcCur = fromCurrency ?? currency;
       const destCurrency =
         toKind === "asset"
-          ? assets.find((a) => a.id === id)?.currency ?? currency
-          : accountsById.get(id)?.currency ?? currency;
-      const amountMinor = toMinorUnits(major, currency);
-      const toAmount = fx.convert(amountMinor, currency, destCurrency);
+          ? assets.find((a) => a.id === toId)?.currency ?? srcCur
+          : accountsById.get(toId)?.currency ?? srcCur;
+      const amountMinor = toMinorUnits(major, srcCur);
+      const toAmount = fx.convert(amountMinor, srcCur, destCurrency);
       onTransfer({
-        fromAccountId: accountId,
+        fromKind: fromKind as "account" | "asset",
+        fromId,
         toKind,
-        toId: id,
+        toId,
         amount: amountMinor,
         toAmount,
         date,
@@ -651,65 +687,105 @@ export function AddTransactionDialog({
               </div>
             )}
 
-            {/* Account that paid + the currency it was charged in */}
-            <div className="grid grid-cols-2 gap-3">
+            {/* Source: an account OR asset (transfer) — or the paying account
+                + charged currency (expense/income). */}
+            {transferMode ? (
               <div className="space-y-1.5">
-                <Label>{transferMode ? "From account" : "Account paid from"}</Label>
+                <Label>From</Label>
                 <Select
-                  value={accountId}
+                  value={fromTarget}
                   onValueChange={(v) => {
-                    setAccountId(v);
-                    const acc = accountsById.get(v);
-                    if (acc) setCurrency(acc.currency);
+                    setFromTarget(v);
+                    // Amount is entered in the source's currency.
+                    const [k, id] = v.split(":");
+                    const cur =
+                      k === "ast"
+                        ? assets.find((a) => a.id === id)?.currency
+                        : accountsById.get(id)?.currency;
+                    if (cur) setCurrency(cur);
                   }}
                 >
                   <SelectTrigger className="w-full">
-                    <SelectValue />
+                    <SelectValue placeholder="Choose source" />
                   </SelectTrigger>
                   <SelectContent>
-                    {selectable.map((a) => {
-                      const parent = a.parentId
-                        ? accountsById.get(a.parentId)
-                        : undefined;
-                      return (
-                        <SelectItem key={a.id} value={a.id}>
-                          {parent ? `${parent.name} › ` : ""}
-                          {a.name}{" "}
-                          <span className="text-muted-foreground">· {a.currency}</span>
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
-                <Label>Currency</Label>
-                <Select value={currency} onValueChange={setCurrency}>
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CURRENCIES.map((c) => (
-                      <SelectItem key={c.code} value={c.code}>
-                        {c.code} · {c.symbol}
+                    {fromOptions.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.label}{" "}
+                        <span className="text-muted-foreground">· {o.sub}</span>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
-            </div>
-
-            {(() => {
-              const acc = accountsById.get(accountId);
-              if (acc && currency !== acc.currency)
-                return (
-                  <p className="-mt-2 text-xs text-amber-600 dark:text-amber-400">
-                    Charged in {currency}, but {acc.name} is in {acc.currency} — the
-                    balance will use today&apos;s conversion.
+                {fromKind === "asset" && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Sells this much of the asset and moves it to the destination —
+                    its value, quantity and cost basis reduce proportionally.
                   </p>
-                );
-              return null;
-            })()}
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label>Account paid from</Label>
+                    <Select
+                      value={accountId}
+                      onValueChange={(v) => {
+                        setAccountId(v);
+                        const acc = accountsById.get(v);
+                        if (acc) setCurrency(acc.currency);
+                      }}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {selectable.map((a) => {
+                          const parent = a.parentId
+                            ? accountsById.get(a.parentId)
+                            : undefined;
+                          return (
+                            <SelectItem key={a.id} value={a.id}>
+                              {parent ? `${parent.name} › ` : ""}
+                              {a.name}{" "}
+                              <span className="text-muted-foreground">· {a.currency}</span>
+                            </SelectItem>
+                          );
+                        })}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Currency</Label>
+                    <Select value={currency} onValueChange={setCurrency}>
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CURRENCIES.map((c) => (
+                          <SelectItem key={c.code} value={c.code}>
+                            {c.code} · {c.symbol}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {(() => {
+                  const acc = accountsById.get(accountId);
+                  if (acc && currency !== acc.currency)
+                    return (
+                      <p className="-mt-2 text-xs text-amber-600 dark:text-amber-400">
+                        Charged in {currency}, but {acc.name} is in {acc.currency} — the
+                        balance will use today&apos;s conversion.
+                      </p>
+                    );
+                  return null;
+                })()}
+              </>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <div className={cn("space-y-1.5", useItems && "col-span-2")}>

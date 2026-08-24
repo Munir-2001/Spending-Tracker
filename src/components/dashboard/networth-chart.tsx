@@ -8,7 +8,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { netWorthSeriesBase } from "@/lib/compute";
+import { netWorthSnapshot } from "@/lib/compute";
 import { formatCompact, formatMonth, formatMoney } from "@/lib/format";
 import { useAppData } from "@/components/transactions/transactions-provider";
 
@@ -16,8 +16,12 @@ const chartConfig = {
   value: { label: "Net worth", color: "var(--chart-1)" },
 } satisfies ChartConfig;
 
+// Closed months to show alongside the live "now" point.
+const CLOSED_MONTHS_SHOWN = 5;
+
 export function NetWorthChart() {
-  const { accounts, items, assets, baseCurrency, fx } = useAppData();
+  const { accounts, items, assets, snapshots, balanceOf, baseCurrency, fx } =
+    useAppData();
 
   if (accounts.length === 0) {
     return (
@@ -27,7 +31,17 @@ export function NetWorthChart() {
     );
   }
 
-  const data = netWorthSeriesBase(accounts, items, assets, fx, new Date(), 6).map(
+  // History comes from persisted snapshots (anchored in time — they don't shift
+  // when FX rates are refreshed). The current, still-open month is always the
+  // live figure, computed exactly like a snapshot so the line joins seamlessly.
+  const nowMonth = new Date().toISOString().slice(0, 7); // yyyy-mm
+  const closed = snapshots
+    .filter((s) => s.asOf.slice(0, 7) !== nowMonth)
+    .slice(-CLOSED_MONTHS_SHOWN)
+    .map((s) => ({ month: s.asOf, value: s.value }));
+
+  const live = netWorthSnapshot(accounts, balanceOf, assets, items, fx);
+  const data = [...closed, { month: `${nowMonth}-15`, value: live.value }].map(
     (p) => ({ month: formatMonth(p.month), value: p.value })
   );
 

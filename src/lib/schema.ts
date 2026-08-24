@@ -178,6 +178,22 @@ export type NewFeedbackInput = {
 };
 
 /**
+ * A point-in-time net-worth capture (base-currency minor units) at a closing
+ * date. Written with the rates/prices live at capture time, so historical
+ * points are immutable — refreshing FX later never rewrites the past.
+ */
+export type NetWorthSnapshotRow = {
+  id: string;
+  user_id: string;
+  as_of: string; // yyyy-mm-dd closing date
+  value_minor: number;
+  base_currency: string;
+  breakdown: { accounts?: number; assets?: number; receivables?: number };
+  approximate: boolean; // true for the one-time backfill seed
+  created_at: string;
+};
+
+/**
  * A single purchase ("lot") of a market-priced holding (gold now, crypto later).
  * The parent AssetRow keeps the aggregate quantity/cost_basis; lots are the
  * source of truth for cost basis and per-purchase P/L.
@@ -253,6 +269,7 @@ export type TableMap = {
   recurring_rules: RecurringRow;
   user_settings: UserSettingsRow;
   feedback: FeedbackRow;
+  net_worth_snapshots: NetWorthSnapshotRow;
 };
 
 export type TableName = keyof TableMap;
@@ -285,10 +302,11 @@ export type NewTransactionInput = {
 
 /** Input for moving money between an account and another account or asset. */
 export type TransferInput = {
-  fromAccountId: string;
+  fromKind: "account" | "asset";
+  fromId: string;
   toKind: "account" | "asset";
   toId: string;
-  amount: number; // positive minor units, in the FROM account's currency
+  amount: number; // positive minor units, in the SOURCE's currency
   toAmount: number; // positive minor units, in the destination's currency
   date: string;
   note: string;

@@ -7,6 +7,14 @@ import { redirect } from "next/navigation";
 
 import * as db from "@/server/db";
 import { enc, dec, hashToken } from "@/server/crypto";
+import {
+  accountToUi,
+  assetToUi,
+  categoryToUi,
+  lineToUi,
+  snapshotToUi,
+  transactionToUi,
+} from "@/server/mappers";
 import * as v from "@/server/validation";
 import { createClient } from "@/lib/supabase/server";
 import { SUPABASE_CONFIGURED } from "@/lib/supabase/config";
@@ -44,11 +52,13 @@ import type {
   Category,
   Feedback,
   Goal,
+  NetWorthSnapshot,
   RecurringRule,
   Transaction,
   TransactionItem,
 } from "@/lib/data";
 import { DEFAULT_BASE_CURRENCY, DEFAULT_RATES, toMinorUnits } from "@/lib/currency";
+import { partialSale } from "@/lib/compute";
 import { goldValueMajor, gramsOf, GRAMS_PER_UNIT } from "@/lib/gold";
 import { getUsdGoldQuote, getCryptoPricesUsd, getFxRatesUsd } from "@/server/prices";
 
@@ -113,74 +123,7 @@ export async function signOut() {
   redirect("/"); // back to the landing
 }
 
-// ── Row → UI mappers ────────────────────────────────────────────────────────
-function accountToUi(r: AccountRow): Account {
-  return {
-    id: r.id,
-    name: dec(r.name) ?? "",
-    institution: dec(r.institution),
-    accountNumber: dec(r.account_number),
-    type: r.type === "liability" ? "liability" : "asset",
-    subtype: r.subtype,
-    currency: r.currency,
-    parentId: r.parent_id,
-    isGroup: r.is_group,
-    openingBalance: r.opening_balance,
-  };
-}
-
-function categoryToUi(r: CategoryRow): Category {
-  return {
-    id: r.id,
-    label: r.name,
-    kind: r.kind,
-    tint: r.color ?? "var(--muted-foreground)",
-    parentId: r.parent_id ?? null,
-  };
-}
-
-function lineToUi(r: TransactionLineRow): TransactionItem {
-  return {
-    id: r.id,
-    categoryId: r.category_id ?? "",
-    description: dec(r.description) ?? "",
-    amount: r.amount,
-    reimbursable: r.reimbursable ?? false,
-  };
-}
-
-function transactionToUi(
-  r: TransactionRow,
-  items?: TransactionItem[]
-): Transaction {
-  const reimburseAmount = r.reimburse_amount ?? 0;
-  return {
-    id: r.id,
-    date: r.date,
-    merchant: dec(r.description) ?? "",
-    categoryId: r.category_id ?? "",
-    accountId: r.account_id,
-    amount: r.amount,
-    currency: r.currency,
-    pending: r.status === "pending",
-    items: items && items.length ? items : undefined,
-    reimbursement:
-      reimburseAmount > 0 || r.reimburse_person
-        ? {
-            person: dec(r.reimburse_person) ?? "",
-            amount: reimburseAmount,
-            note: dec(r.reimburse_note) ?? "",
-            settled: r.reimburse_settled ?? false,
-            settledAt: r.reimburse_settled_at ?? null,
-          }
-        : undefined,
-    isReimbursement: r.is_reimbursement ?? false,
-    isTransfer: r.is_transfer ?? false,
-    notIncome: r.not_income ?? false,
-    settlesId: r.settles_id ?? undefined,
-    notes: dec(r.notes) ?? undefined,
-  };
-}
+// Row → UI mappers live in @/server/mappers (shared with the snapshot cron).
 
 // Default reimbursement/transfer columns for new rows.
 const noReimburse = {
@@ -210,22 +153,6 @@ export async function listCategories(): Promise<Category[]> {
 }
 
 // ── Assets ──────────────────────────────────────────────────────────────────
-function assetToUi(r: AssetRow): Asset {
-  return {
-    id: r.id,
-    name: dec(r.name) ?? "",
-    type: r.type,
-    value: r.value,
-    currency: r.currency,
-    note: dec(r.note),
-    symbol: r.symbol ?? null,
-    quantity: r.quantity ?? null,
-    unit: r.unit ?? null,
-    karat: r.karat ?? null,
-    costBasis: r.cost_basis ?? null,
-  };
-}
-
 // Market-priced (gold) columns pulled from an input; null for manual assets.
 function marketFields(input: NewAssetInput) {
   return {
@@ -679,6 +606,16 @@ export async function listTransactions(): Promise<Transaction[]> {
     .sort(byDateDesc);
 }
 
+/**
+ * Persisted net-worth history (oldest → newest). These are point-in-time
+ * captures anchored at their `asOf` date — unlike a live recomputation, they
+ * don't shift when FX rates are refreshed. RLS scopes them to the current user.
+ */
+export async function listNetWorthSnapshots(): Promise<NetWorthSnapshot[]> {
+  const rows = await db.selectAll("net_worth_snapshots");
+  return rows.map(snapshotToUi).sort((a, b) => a.asOf.localeCompare(b.asOf));
+}
+
 // ── Writes ──────────────────────────────────────────────────────────────────
 export async function createAccount(raw: NewAccountInput): Promise<Account> {
   const input = v.accountInput.parse(raw) as NewAccountInput;
@@ -939,19 +876,58 @@ export async function recordRepayment(
 }
 
 /**
- * Move money from an account to another account or an asset. Both legs are
- * flagged is_transfer so they're excluded from income/expense — only balances
- * (and net worth) move. Account→asset bumps the asset's value.
+ * Reduce a holding by moving money OUT of it (selling/withdrawing part of an
+ * asset). Everything scales by the same fraction so the asset stays internally
+ * consistent: `value`, `quantity`, `cost_basis` and every purchase lot shrink
+ * proportionally. That matters because market-priced holdings are re-valued from
+ * quantity × live price (crypto) or from their lots (gold) on the next refresh —
+ * shrinking only `value` would be silently undone. You can't withdraw more than
+ * the holding is worth (the amount is clamped). Returns the updated asset.
+ */
+async function reduceAssetHolding(
+  asset: AssetRow,
+  amountInAssetCurrency: number,
+  now: string
+): Promise<Asset | null> {
+  const { remaining, keep } = partialSale(asset.value, Math.abs(amountInAssetCurrency));
+
+  const lots = await db.selectWhere("asset_lots", { asset_id: asset.id });
+  for (const l of lots) {
+    await updateOwned("asset_lots", l.id, {
+      quantity: l.quantity * keep,
+      gold_cost: Math.round(l.gold_cost * keep),
+      commission: Math.round(l.commission * keep),
+      tax: Math.round(l.tax * keep),
+      cost_basis: Math.round(l.cost_basis * keep),
+      updated_at: now,
+    });
+  }
+
+  const patch: Partial<AssetRow> = { value: remaining, updated_at: now };
+  if (asset.quantity != null) patch.quantity = asset.quantity * keep;
+  if (asset.cost_basis != null) patch.cost_basis = Math.round(asset.cost_basis * keep);
+  const updated = await updateOwned("assets", asset.id, patch);
+  return updated ? assetToUi(updated) : null;
+}
+
+/**
+ * Move money between holdings. The source and destination can each be an account
+ * or an asset. Both account legs are flagged is_transfer so they're excluded
+ * from income/expense — only balances (and net worth) move. An asset destination
+ * has its value bumped up; an asset source is partially sold down (see
+ * {@link reduceAssetHolding}).
  */
 export async function recordTransfer(
   raw: TransferInput
-): Promise<{ source: Transaction; dest: Transaction | null; asset: Asset | null }> {
+): Promise<{
+  source: Transaction | null;
+  dest: Transaction | null;
+  asset: Asset | null;
+  fromAsset: Asset | null;
+}> {
   const input = v.transferInput.parse(raw) as TransferInput;
   const userId = await getUserId();
   const now = new Date().toISOString();
-  const from = await db.findById("accounts", input.fromAccountId);
-  const fromCur = from?.currency ?? "USD";
-  const fromName = dec(from?.name) ?? "account";
 
   const leg = (
     accountId: string,
@@ -978,44 +954,59 @@ export async function recordTransfer(
     updated_at: now,
   });
 
-  let destLabel = "transfer";
+  // Resolve both ends up front so each leg's description can name the other.
+  const fromAccount =
+    input.fromKind === "account" ? await db.findById("accounts", input.fromId) : null;
+  const fromAssetRow =
+    input.fromKind === "asset" ? await db.findById("assets", input.fromId) : null;
+  const toAccount =
+    input.toKind === "account" ? await db.findById("accounts", input.toId) : null;
+  const toAssetRow =
+    input.toKind === "asset" ? await db.findById("assets", input.toId) : null;
+
+  const fromCur = (fromAccount?.currency ?? fromAssetRow?.currency) ?? "USD";
+  const fromName = dec(fromAccount?.name ?? fromAssetRow?.name) ?? input.fromKind;
+  const destLabel = dec(toAccount?.name ?? toAssetRow?.name) ?? input.toKind;
+
+  // ── OUT side (source) ──
+  let source: Transaction | null = null;
+  let fromAsset: Asset | null = null;
+  if (input.fromKind === "account") {
+    const sourceRow = leg(
+      input.fromId,
+      -Math.abs(input.amount),
+      fromCur,
+      `Transfer to ${destLabel}`
+    );
+    await db.insert("transactions", sourceRow);
+    source = transactionToUi(sourceRow);
+  } else if (fromAssetRow) {
+    fromAsset = await reduceAssetHolding(fromAssetRow, input.amount, now);
+  }
+
+  // ── IN side (destination) ──
   let dest: Transaction | null = null;
   let assetUi: Asset | null = null;
-
   if (input.toKind === "account") {
-    const to = await db.findById("accounts", input.toId);
-    destLabel = dec(to?.name) ?? "account";
     const destRow = leg(
       input.toId,
       Math.abs(input.toAmount),
-      to?.currency ?? fromCur,
+      toAccount?.currency ?? fromCur,
       `Transfer from ${fromName}`
     );
     await db.insert("transactions", destRow);
     dest = transactionToUi(destRow);
-  } else {
-    const asset = await db.findById("assets", input.toId);
-    if (asset) {
-      destLabel = dec(asset.name) ?? "asset";
-      const updated = await updateOwned("assets", input.toId, {
-        value: asset.value + Math.abs(input.toAmount),
-        updated_at: now,
-      });
-      assetUi = updated ? assetToUi(updated) : null;
-    }
+  } else if (toAssetRow) {
+    const updated = await updateOwned("assets", input.toId, {
+      value: toAssetRow.value + Math.abs(input.toAmount),
+      updated_at: now,
+    });
+    assetUi = updated ? assetToUi(updated) : null;
   }
-
-  const sourceRow = leg(
-    input.fromAccountId,
-    -Math.abs(input.amount),
-    fromCur,
-    `Transfer to ${destLabel}`
-  );
-  await db.insert("transactions", sourceRow);
 
   revalidateTxnViews();
   revalidatePath("/assets");
-  return { source: transactionToUi(sourceRow), dest, asset: assetUi };
+  return { source, dest, asset: assetUi, fromAsset };
 }
 
 /**

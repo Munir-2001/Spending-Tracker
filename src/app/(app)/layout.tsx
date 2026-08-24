@@ -18,6 +18,7 @@ import {
   listBudgets,
   listCategories,
   listGoals,
+  listNetWorthSnapshots,
   listRecurring,
   listTransactions,
 } from "@/server/actions";
@@ -45,6 +46,7 @@ export default async function AppLayout({
   let initialLots: Awaited<ReturnType<typeof listAllLots>> = [];
   let initialGoals: Awaited<ReturnType<typeof listGoals>> = [];
   let initialRecurring: Awaited<ReturnType<typeof listRecurring>> = [];
+  let initialSnapshots: Awaited<ReturnType<typeof listNetWorthSnapshots>> = [];
   let initialSettings: Awaited<ReturnType<typeof getSettings>> = {
     baseCurrency: "USD",
     rates: {},
@@ -62,6 +64,7 @@ export default async function AppLayout({
       initialLots,
       initialGoals,
       initialRecurring,
+      initialSnapshots,
       initialSettings,
       user,
     ] = await Promise.all([
@@ -73,6 +76,7 @@ export default async function AppLayout({
       listAllLots(),
       listGoals(),
       listRecurring(),
+      listNetWorthSnapshots(),
       getSettings(),
       getCurrentUser(),
     ]);
@@ -102,6 +106,7 @@ export default async function AppLayout({
         initialLots={initialLots}
         initialGoals={initialGoals}
         initialRecurring={initialRecurring}
+        initialSnapshots={initialSnapshots}
         initialSettings={initialSettings}
       >
         <AppSidebar user={user} />

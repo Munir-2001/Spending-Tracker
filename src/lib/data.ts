@@ -146,3 +146,17 @@ export type RecurringRule = {
   lastPosted: string | null;
   active: boolean;
 };
+
+/**
+ * A persisted point-in-time net-worth capture (base-currency minor units at
+ * `asOf`, using the rates/prices live when it was taken). `approximate` marks
+ * the one-time backfill seed vs. a true month-end snapshot.
+ */
+export type NetWorthSnapshot = {
+  id: string;
+  asOf: string; // yyyy-mm-dd closing date
+  value: number; // minor units of `baseCurrency`
+  baseCurrency: string;
+  breakdown: { accounts?: number; assets?: number; receivables?: number };
+  approximate: boolean;
+};

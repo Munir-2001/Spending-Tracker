@@ -18,6 +18,7 @@ import type {
   Budget,
   Category,
   Goal,
+  NetWorthSnapshot,
   RecurringRule,
   Transaction,
 } from "@/lib/data";
@@ -33,6 +34,7 @@ import type {
   TransferInput,
 } from "@/lib/schema";
 import { makeFx, type Fx } from "@/lib/currency";
+import { accountBalances } from "@/lib/compute";
 import {
   createAccount,
   createAsset as createAssetAction,
@@ -200,6 +202,8 @@ type Ctx = {
   getCategory: (id: string) => Category | undefined;
   /** Balance of a single account in its own currency: opening + its transactions. */
   balanceOf: (accountId: string) => number;
+  /** Persisted net-worth history (oldest → newest), anchored at each closing date. */
+  snapshots: NetWorthSnapshot[];
 
   // Currency settings
   baseCurrency: string;
@@ -227,6 +231,7 @@ export function TransactionsProvider({
   initialLots,
   initialGoals,
   initialRecurring,
+  initialSnapshots,
   initialSettings,
   children,
 }: {
@@ -238,6 +243,7 @@ export function TransactionsProvider({
   initialLots: AssetLot[];
   initialGoals: Goal[];
   initialRecurring: RecurringRule[];
+  initialSnapshots: NetWorthSnapshot[];
   initialSettings: AppSettings;
   children: React.ReactNode;
 }) {
@@ -263,6 +269,8 @@ export function TransactionsProvider({
   const [editingAsset, setEditingAsset] = useState<Asset | null>(null);
   const [isCategoryOpen, setCategoryOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  // Net-worth history is loaded once server-side and is read-only in-session.
+  const [snapshots] = useState<NetWorthSnapshot[]>(initialSnapshots);
   const [baseCurrency, setBaseCurrency] = useState(initialSettings.baseCurrency);
   const [rates, setRates] = useState(initialSettings.rates);
   const [defaultAccountId, setDefaultAccountId] = useState<string | null>(
@@ -384,12 +392,19 @@ export function TransactionsProvider({
   const recordTransfer = useCallback((input: TransferInput) => {
     loader.start();
     recordTransferAction(input)
-      .then(({ source, dest, asset }) => {
-        setItems((prev) => {
-          const add = [source, ...(dest ? [dest] : [])];
-          return [...add, ...prev].sort(byDateDesc);
-        });
-        if (asset) setAssets((prev) => prev.map((a) => (a.id === asset.id ? asset : a)));
+      .then(({ source, dest, asset, fromAsset }) => {
+        const add = [
+          ...(source ? [source] : []),
+          ...(dest ? [dest] : []),
+        ];
+        if (add.length)
+          setItems((prev) => [...add, ...prev].sort(byDateDesc));
+        // A destination asset gained value; a source asset was sold down.
+        const changed = [asset, fromAsset].filter(Boolean) as Asset[];
+        if (changed.length)
+          setAssets((prev) =>
+            prev.map((a) => changed.find((c) => c.id === a.id) ?? a)
+          );
         toast.success("Transfer recorded", {
           description: "Moved between holdings — not counted as spending.",
         });
@@ -703,18 +718,12 @@ export function TransactionsProvider({
     [categories]
   );
 
-  const ownBalance = useMemo(() => {
-    const curById = new Map(accounts.map((a) => [a.id, a.currency]));
-    const map = new Map<string, number>();
-    for (const a of accounts) map.set(a.id, a.isGroup ? 0 : a.openingBalance);
-    for (const t of items) {
-      const accCur = curById.get(t.accountId);
-      // Convert the charge into the account's own currency (they may differ).
-      const amt = accCur ? fx.convert(t.amount, t.currency, accCur) : t.amount;
-      map.set(t.accountId, (map.get(t.accountId) ?? 0) + amt);
-    }
-    return map;
-  }, [accounts, items, fx]);
+  // Shared with the server-side snapshot job so a stored net worth matches the
+  // live figure exactly (see @/lib/compute#accountBalances).
+  const ownBalance = useMemo(
+    () => accountBalances(accounts, items, fx),
+    [accounts, items, fx]
+  );
 
   const [isAdjustOpen, setAdjustOpenState] = useState(false);
   const [adjustAccount, setAdjustAccount] = useState<Account | null>(null);
@@ -884,6 +893,7 @@ export function TransactionsProvider({
       getAccount: (id) => accountsById.get(id),
       getCategory: (id) => categoriesById.get(id),
       balanceOf: (id) => ownBalance.get(id) ?? 0,
+      snapshots,
       baseCurrency,
       fx,
       rates,
@@ -958,6 +968,7 @@ export function TransactionsProvider({
       accountsById,
       categoriesById,
       ownBalance,
+      snapshots,
       baseCurrency,
       fx,
       rates,

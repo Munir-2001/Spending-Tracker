@@ -119,18 +119,27 @@ export function AssetDialog({
     }
   }, [open, editing]);
 
+  // The value the user typed into the "Current value" field (major → minor),
+  // falling back to the asset's existing value if the field is blank/invalid.
+  function editedValueMinor(a: Asset): number {
+    const major = Number.parseFloat(value);
+    return Number.isFinite(major) && major >= 0
+      ? toMinorUnits(major, a.currency)
+      : a.value;
+  }
+
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return toast.error("Give the asset a name.");
 
     if (isGold) {
-      // Editing a gold holding = metadata only; preserve its lot-derived
-      // aggregates so updateAsset doesn't null them out.
+      // Editing a gold holding = metadata + an optional manual value override;
+      // preserve its lot-derived aggregates so updateAsset doesn't null them out.
       if (editing) {
         onSave(editing.id, {
           name: name.trim(),
           type,
-          value: editing.value,
+          value: editedValueMinor(editing),
           currency: editing.currency,
           note: note.trim() || null,
           symbol: "XAU",
@@ -183,12 +192,13 @@ export function AssetDialog({
     }
 
     if (isCrypto) {
-      // Editing = metadata only; preserve lot-derived aggregates.
+      // Editing = metadata + an optional manual value override; preserve
+      // lot-derived aggregates.
       if (editing) {
         onSave(editing.id, {
           name: name.trim(),
           type,
-          value: editing.value,
+          value: editedValueMinor(editing),
           currency: editing.currency,
           note: note.trim() || null,
           symbol: editing.symbol,
@@ -387,10 +397,35 @@ export function AssetDialog({
               </div>
 
               {isEditing ? (
-                <p className="rounded-md bg-muted/50 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
-                  Cost basis and purchases are managed as lots on the asset — use
-                  “Add purchase” on the assets page to record another buy.
-                </p>
+                <>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="gold-value-edit">Current value ({currency})</Label>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                        {sym}
+                      </span>
+                      <Input
+                        id="gold-value-edit"
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        min="0"
+                        value={value}
+                        onChange={(e) => setValue(e.target.value)}
+                        placeholder="0"
+                        className="num pl-7"
+                      />
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Override what it&apos;s worth now — the live gold price refresh
+                      will update it again later.
+                    </p>
+                  </div>
+                  <p className="rounded-md bg-muted/50 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                    Cost basis and purchases are managed as lots on the asset — use
+                    “Add purchase” on the assets page to record another buy.
+                  </p>
+                </>
               ) : (
                 <>
                   <div className="space-y-1.5">
@@ -537,10 +572,35 @@ export function AssetDialog({
               </div>
 
               {isEditing ? (
-                <p className="rounded-md bg-muted/50 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
-                  Cost basis and purchases are managed as lots — use “Add purchase” on
-                  the assets page to record another buy.
-                </p>
+                <>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="crypto-value-edit">Current value ({currency})</Label>
+                    <div className="relative">
+                      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                        {sym}
+                      </span>
+                      <Input
+                        id="crypto-value-edit"
+                        type="number"
+                        inputMode="decimal"
+                        step="any"
+                        min="0"
+                        value={value}
+                        onChange={(e) => setValue(e.target.value)}
+                        placeholder="0"
+                        className="num pl-7"
+                      />
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">
+                      Set what your holding is worth today. If the coin has a live
+                      price, the next refresh will update it again.
+                    </p>
+                  </div>
+                  <p className="rounded-md bg-muted/50 px-3 py-2.5 text-[11px] leading-relaxed text-muted-foreground">
+                    Cost basis and purchases are managed as lots — use “Add purchase” on
+                    the assets page to record another buy.
+                  </p>
+                </>
               ) : (
                 <>
                   <div className="grid grid-cols-2 gap-3">

@@ -32,6 +32,29 @@ export function categoryLinesOf(
   return [{ categoryId: t.categoryId, amount: t.amount }];
 }
 
+/**
+ * Balance of every account in its OWN currency: opening balance plus each
+ * transaction, converted into the account's currency (a charge may be booked in
+ * a different currency than the account holds). Group accounts are always 0.
+ * The single source of truth for "what's in each account" — shared by the live
+ * app (provider) and the server-side net-worth snapshot job.
+ */
+export function accountBalances(
+  accounts: Account[],
+  transactions: Transaction[],
+  fx: Fx
+): Map<string, number> {
+  const curById = new Map(accounts.map((a) => [a.id, a.currency]));
+  const map = new Map<string, number>();
+  for (const a of accounts) map.set(a.id, a.isGroup ? 0 : a.openingBalance);
+  for (const t of transactions) {
+    const accCur = curById.get(t.accountId);
+    const amt = accCur ? fx.convert(t.amount, t.currency, accCur) : t.amount;
+    map.set(t.accountId, (map.get(t.accountId) ?? 0) + amt);
+  }
+  return map;
+}
+
 /** Net worth in base currency: every non-group account's balance, converted. */
 export function netWorthBase(
   accounts: Account[],
@@ -194,6 +217,25 @@ export function monthFlowsBase(
 /** Total value of all assets, converted to base currency. */
 export function assetsBase(assets: Asset[], fx: Fx): number {
   return assets.reduce((sum, a) => sum + fx.toBase(a.value, a.currency), 0);
+}
+
+export type PartialSale = {
+  withdrawn: number; // amount actually removed (clamped to [0, value])
+  remaining: number; // value left in the holding
+  keep: number; // fraction retained (0..1) — scale quantity/cost/lots by this
+};
+
+/**
+ * Proportional partial sale of a holding worth `value` (same-currency minor
+ * units) when `amount` is withdrawn. You can't withdraw more than it's worth
+ * (clamped), and `keep` is the fraction to multiply every scalable field by
+ * (quantity, cost basis, each lot) so the holding stays internally consistent.
+ */
+export function partialSale(value: number, amount: number): PartialSale {
+  const withdrawn = Math.min(Math.max(0, amount), Math.max(0, value));
+  const remaining = value - withdrawn;
+  const keep = value > 0 ? remaining / value : 0;
+  return { withdrawn, remaining, keep };
 }
 
 // ── Gold cost-basis & P/L ────────────────────────────────────────────────────
@@ -386,12 +428,55 @@ export function netWorthComposition(
   return slices.sort((a, b) => b.value - a.value);
 }
 
+export type NetWorthBreakdown = {
+  accounts: number; // sum of non-group account balances, base minor units
+  assets: number; // sum of asset values, base minor units
+  receivables: number; // money owed to you, base minor units
+};
+
+export type NetWorthSnapshotResult = {
+  value: number; // total net worth, base-currency minor units
+  breakdown: NetWorthBreakdown;
+};
+
+/**
+ * Net worth RIGHT NOW as a total plus its parts, in base currency. This is the
+ * single source of truth for a net-worth figure: the live dashboard point and
+ * the persisted month-end snapshot both come from here, so a stored snapshot is
+ * exactly "what the dashboard showed at capture time." Because it's evaluated
+ * with whatever `fx`/balances/asset values are current, calling it later with
+ * refreshed rates yields a different (current) number — which is why history is
+ * PERSISTED via snapshots rather than recomputed. Uses {@link netWorthBase},
+ * {@link assetsBase} and {@link pendingReceivablesBase}.
+ */
+export function netWorthSnapshot(
+  accounts: Account[],
+  balanceOf: (id: string) => number,
+  assets: Asset[],
+  transactions: Transaction[],
+  fx: Fx
+): NetWorthSnapshotResult {
+  const accountsTotal = netWorthBase(accounts, balanceOf, fx);
+  const assetsTotal = assetsBase(assets, fx);
+  const receivables = pendingReceivablesBase(transactions, fx);
+  return {
+    value: accountsTotal + assetsTotal + receivables,
+    breakdown: { accounts: accountsTotal, assets: assetsTotal, receivables },
+  };
+}
+
 export type NetWorthPoint = { month: string; value: number };
 
 /**
- * Reconstruct net worth at the end of each of the trailing `months`, in base
- * currency. Account balances are exact (opening + transactions up to that date);
- * assets are held at their current value (we don't store asset history yet).
+ * APPROXIMATE reconstruction of net worth at the end of each of the trailing
+ * `months`, in base currency, using TODAY's rates and asset values. Account
+ * balances are exact (opening + transactions up to that date), but FX and asset
+ * prices are current, not historical — so past points are only an estimate.
+ *
+ * This is intentionally NOT the source of the dashboard chart anymore (that
+ * reads persisted {@link netWorthSnapshot} rows, which are anchored in time).
+ * It survives only to seed a one-time backfill so a brand-new install isn't
+ * showing an empty chart; those seeded points are flagged `approximate`.
  */
 export function netWorthSeriesBase(
   accounts: Account[],

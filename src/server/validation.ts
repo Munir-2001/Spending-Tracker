@@ -147,7 +147,8 @@ export const categoryInput = z.object({
 });
 
 export const transferInput = z.object({
-  fromAccountId: idStr,
+  fromKind: z.enum(["account", "asset"]),
+  fromId: idStr,
   toKind: z.enum(["account", "asset"]),
   toId: idStr,
   amount: z.number().int().positive(),

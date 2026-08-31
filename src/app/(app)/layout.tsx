@@ -5,6 +5,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { DataLoadError } from "@/components/data-load-error";
 import { ModeToggle } from "@/components/mode-toggle";
 import { PrivacyToggle } from "@/components/privacy-toggle";
+import { PrivacyGate } from "@/components/privacy-gate";
 import { TransactionsProvider } from "@/components/transactions/transactions-provider";
 import { NewTransactionButton } from "@/components/transactions/new-transaction-button";
 import { RouteProgress } from "@/components/ui/route-progress";
@@ -95,6 +96,9 @@ export default async function AppLayout({
 
   return (
     <SidebarProvider>
+      {/* Covers the app on every load and asks whether to blur amounts before
+          anything is revealed. */}
+      <PrivacyGate />
       <RouteProgress />
       <ConfirmProvider>
       <TransactionsProvider

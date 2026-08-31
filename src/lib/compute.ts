@@ -465,6 +465,125 @@ export function netWorthSnapshot(
   };
 }
 
+// ── Zakat ────────────────────────────────────────────────────────────────────
+
+/** Zakat is 2.5% of qualifying wealth held for one lunar year, above nisab. */
+export const ZAKAT_RATE = 0.025;
+/** Nisab thresholds in grams of the metal (classical weights). */
+export const NISAB_GOLD_GRAMS = 87.48;
+export const NISAB_SILVER_GRAMS = 612.36;
+
+export type ZakatCategory =
+  | "cash"
+  | "gold"
+  | "crypto"
+  | "investment"
+  | "receivable"
+  | "debt"
+  | "other";
+
+export type ZakatLine = {
+  id: string;
+  label: string;
+  category: ZakatCategory;
+  value: number; // base-currency minor units, positive magnitude
+  /** Whether it's counted by default (wealth added, or — for `debt` — deducted). */
+  included: boolean;
+};
+
+function assetZakatCategory(type: Asset["type"]): ZakatCategory {
+  switch (type) {
+    case "gold":
+      return "gold";
+    case "crypto":
+      return "crypto";
+    case "investment":
+      return "investment";
+    case "cash":
+      return "cash";
+    default:
+      return "other"; // property / vehicle / valuable / other — personal use
+  }
+}
+
+/**
+ * Every holding as a Zakat line in base currency, with a sensible default for
+ * whether it counts. Cash, gold, crypto, tradeable investments and money owed to
+ * you are zakatable; personal-use assets (property, vehicle, valuables) are
+ * excluded by default; debts are deductible. The user can flip any of these —
+ * rulings vary by school — so these are defaults, not verdicts.
+ */
+export function zakatLines(
+  accounts: Account[],
+  balanceOf: (id: string) => number,
+  assets: Asset[],
+  transactions: Transaction[],
+  fx: Fx
+): ZakatLine[] {
+  const lines: ZakatLine[] = [];
+
+  for (const a of accounts.filter((x) => !x.isGroup)) {
+    const bal = fx.toBase(balanceOf(a.id), a.currency);
+    if (bal === 0) continue;
+    if (a.type === "liability" || bal < 0) {
+      lines.push({ id: a.id, label: a.name, category: "debt", value: Math.abs(bal), included: true });
+    } else {
+      const category: ZakatCategory = a.subtype === "investment" ? "investment" : "cash";
+      lines.push({ id: a.id, label: a.name, category, value: bal, included: true });
+    }
+  }
+
+  for (const a of assets) {
+    const value = fx.toBase(a.value, a.currency);
+    if (value <= 0) continue;
+    const category = assetZakatCategory(a.type);
+    lines.push({ id: a.id, label: a.name, category, value, included: category !== "other" });
+  }
+
+  const receivable = pendingReceivablesBase(transactions, fx);
+  if (receivable > 0)
+    lines.push({
+      id: "receivables",
+      label: "Owed to you",
+      category: "receivable",
+      value: receivable,
+      included: true,
+    });
+
+  return lines;
+}
+
+export type ZakatSummary = {
+  zakatable: number; // included wealth, base minor units
+  deductible: number; // included debts, base minor units
+  net: number; // max(0, zakatable − deductible)
+  nisab: number; // threshold, base minor units
+  meetsNisab: boolean;
+  due: number; // ZAKAT_RATE × net when at/above nisab, else 0
+};
+
+/** Roll a set of Zakat lines (honoring each line's `included` flag) into a due
+ *  amount at 2.5% of net zakatable wealth, gated by the nisab threshold. */
+export function zakatSummary(lines: ZakatLine[], nisab: number): ZakatSummary {
+  let zakatable = 0;
+  let deductible = 0;
+  for (const l of lines) {
+    if (!l.included) continue;
+    if (l.category === "debt") deductible += l.value;
+    else zakatable += l.value;
+  }
+  const net = Math.max(0, zakatable - deductible);
+  const meetsNisab = net >= nisab && nisab > 0;
+  return {
+    zakatable,
+    deductible,
+    net,
+    nisab,
+    meetsNisab,
+    due: meetsNisab ? Math.round(net * ZAKAT_RATE) : 0,
+  };
+}
+
 export type NetWorthPoint = { month: string; value: number };
 
 /**

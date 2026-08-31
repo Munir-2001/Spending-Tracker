@@ -60,7 +60,12 @@ import type {
 import { DEFAULT_BASE_CURRENCY, DEFAULT_RATES, toMinorUnits } from "@/lib/currency";
 import { partialSale } from "@/lib/compute";
 import { goldValueMajor, gramsOf, GRAMS_PER_UNIT } from "@/lib/gold";
-import { getUsdGoldQuote, getCryptoPricesUsd, getFxRatesUsd } from "@/server/prices";
+import {
+  getUsdGoldQuote,
+  getUsdSilverQuote,
+  getCryptoPricesUsd,
+  getFxRatesUsd,
+} from "@/server/prices";
 
 /**
  * The current authenticated user's id (or the demo user in local mode).
@@ -1207,6 +1212,24 @@ export async function updateFeedback(
 export async function deleteFeedback(id: string): Promise<void> {
   v.idInput.parse(id);
   await removeOwned("feedback", id);
+}
+
+/**
+ * Live gold + silver spot (per-gram, USD) for the Zakat nisab thresholds.
+ * Either may be null if its feed is unreachable — the calculator then falls back
+ * to a manual nisab. Cached ~12h like the other metal quotes.
+ */
+export async function getZakatMetals(): Promise<{
+  goldGramUsd: number | null;
+  silverGramUsd: number | null;
+  at: string | null;
+}> {
+  const [gold, silver] = await Promise.all([getUsdGoldQuote(), getUsdSilverQuote()]);
+  return {
+    goldGramUsd: gold?.gram24k ?? null,
+    silverGramUsd: silver?.gram24k ?? null,
+    at: gold?.at ?? silver?.at ?? null,
+  };
 }
 
 export async function getSettings(): Promise<AppSettings> {

@@ -21,8 +21,8 @@ export type GoldQuote = { gram24k: number; currency: string; at: string };
 const TTL_MS = 12 * 60 * 60 * 1000; // 12h
 const OZT_GRAMS = GRAMS_PER_UNIT.ozt; // 31.1034768 g per troy ounce
 
-const SWISSQUOTE_URL =
-  "https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/XAU/USD";
+const swissquoteUrl = (metal: "XAU" | "XAG") =>
+  `https://forex-data-feed.swissquote.com/public-quotes/bboquotes/instrument/${metal}/USD`;
 
 /**
  * Guard against a compromised, buggy, or spoofed upstream response: accept a
@@ -85,10 +85,10 @@ type SwissquoteQuote = {
   spreadProfilePrices?: { bid?: number; ask?: number }[];
 };
 
-/** Free public XAU/USD feed (per troy ounce) → USD per-gram 24k. Null on failure. */
-async function fetchSwissquoteGram(): Promise<number | null> {
+/** Free public metal/USD feed (per troy ounce) → USD per-gram. Null on failure. */
+async function fetchSwissquoteGram(metal: "XAU" | "XAG" = "XAU"): Promise<number | null> {
   try {
-    const res = await timedFetch(SWISSQUOTE_URL, {
+    const res = await timedFetch(swissquoteUrl(metal), {
       headers: { Accept: "application/json", "User-Agent": "Ledger/1.0" },
       cache: "no-store",
     });
@@ -112,12 +112,15 @@ async function fetchSwissquoteGram(): Promise<number | null> {
   }
 }
 
-/** goldapi.io per-gram 24k in `currency` — fallback only, and only if a key is set. */
-async function fetchGoldApiGram(currency: string): Promise<number | null> {
+/** goldapi.io per-gram in `currency` — fallback only, and only if a key is set. */
+async function fetchGoldApiGram(
+  currency: string,
+  metal: "XAU" | "XAG" = "XAU"
+): Promise<number | null> {
   const token = process.env.GOLD_API_KEY;
   if (!token) return null;
   try {
-    const res = await timedFetch(`https://www.goldapi.io/api/XAU/${currency.toUpperCase()}`, {
+    const res = await timedFetch(`https://www.goldapi.io/api/${metal}/${currency.toUpperCase()}`, {
       headers: { "x-access-token": token, "Content-Type": "application/json" },
       cache: "no-store",
     });
@@ -150,6 +153,31 @@ export async function getUsdGoldQuote(force = false): Promise<GoldQuote | null> 
   const quote: GoldQuote = { gram24k, currency: "USD", at: new Date().toISOString() };
   cache[key] = quote;
   // A cache-write failure (read-only FS) must not discard a good quote.
+  try {
+    await writeCache(cache);
+  } catch {
+    /* ignore */
+  }
+  return quote;
+}
+
+/**
+ * Live silver spot in USD (per-gram), cached like gold. Used for the silver
+ * nisab threshold in the Zakat calculator. `gram24k` here is simply the per-gram
+ * pure-silver price (the field name is shared with the gold quote type).
+ */
+export async function getUsdSilverQuote(force = false): Promise<GoldQuote | null> {
+  const key = "XAG:USD";
+  const cache = await readCache();
+  const hit = cache[key];
+  if (!force && hit && Date.now() - Date.parse(hit.at) < TTL_MS) return hit;
+
+  let gram = await fetchSwissquoteGram("XAG");
+  if (gram == null) gram = await fetchGoldApiGram("USD", "XAG");
+  if (gram == null || !Number.isFinite(gram) || gram <= 0) return hit ?? null;
+
+  const quote: GoldQuote = { gram24k: gram, currency: "USD", at: new Date().toISOString() };
+  cache[key] = quote;
   try {
     await writeCache(cache);
   } catch {

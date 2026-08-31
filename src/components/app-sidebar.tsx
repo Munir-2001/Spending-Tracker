@@ -17,6 +17,7 @@ import {
   Repeat,
   PiggyBank,
   CalendarClock,
+  HandHeart,
   Sparkles,
   Settings,
   LifeBuoy,
@@ -68,6 +69,7 @@ const navGroups = [
     items: [
       { title: "Budgets", href: "/budgets", icon: Target },
       { title: "Goals", href: "/goals", icon: PiggyBank },
+      { title: "Zakat", href: "/zakat", icon: HandHeart },
       { title: "Recurring", href: "/recurring", icon: CalendarClock },
       { title: "Subscriptions", href: "/subscriptions", icon: Repeat },
     ],

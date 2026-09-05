@@ -206,7 +206,7 @@ export function AddAccountDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="acc-name">Name</Label>
+            <Label htmlFor="acc-name">Account title</Label>
             <Input
               id="acc-name"
               value={name}
@@ -331,13 +331,14 @@ export function AddAccountDialog({
                 </div>
 
                 <div className="col-span-2 space-y-1.5">
-                  <Label htmlFor="acc-num">Account number (optional)</Label>
+                  <Label htmlFor="acc-iban">IBAN (optional)</Label>
                   <Input
-                    id="acc-num"
-                    value={accountNumber}
-                    onChange={(e) => setAccountNumber(e.target.value)}
+                    id="acc-iban"
+                    value={iban}
+                    onChange={(e) => setIban(e.target.value)}
                     placeholder="PK00 HABB 0000 1234 5678"
                     autoComplete="off"
+                    className="num"
                   />
                   <p className="text-[11px] text-muted-foreground">
                     🔒 Encrypted before it’s stored — the database never sees it
@@ -358,12 +359,12 @@ export function AddAccountDialog({
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="acc-iban">IBAN (optional)</Label>
+                  <Label htmlFor="acc-num">Account number (optional)</Label>
                   <Input
-                    id="acc-iban"
-                    value={iban}
-                    onChange={(e) => setIban(e.target.value)}
-                    placeholder="PK…"
+                    id="acc-num"
+                    value={accountNumber}
+                    onChange={(e) => setAccountNumber(e.target.value)}
+                    placeholder="0123456789"
                     autoComplete="off"
                     className="num"
                   />

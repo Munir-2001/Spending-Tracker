@@ -4,8 +4,11 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import type { SupabaseClient } from "@supabase/supabase-js";
+
 import { GRAMS_PER_UNIT } from "@/lib/gold";
 import { fxFromPerUsd } from "@/lib/fx";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
  * Live gold spot price (per-gram 24k, in USD), cached to disk with a 12h TTL.
@@ -133,47 +136,42 @@ async function fetchGoldApiGram(
 }
 
 /**
- * International gold spot in USD (per-gram 24k) — the source of truth. Callers
- * convert into each holding's currency with the user's own FX rates.
- *
- * `force` bypasses the fresh-cache short-circuit so an explicit user refresh
- * always re-fetches; background refreshes leave it false to reuse the cache.
+ * Live metal spot in USD (per-gram), shared by gold (XAU) and silver (XAG).
+ * Free public feed first, keyed goldapi.io only as a fallback. Cached in the
+ * shared DB `price_cache` in production (so the upstream is hit ~once per TTL for
+ * the whole app), and on disk in local mode. `force` bypasses the cache.
  */
-export async function getUsdGoldQuote(force = false): Promise<GoldQuote | null> {
-  const key = "XAU:USD";
-  const cache = await readCache();
-  const hit = cache[key];
-  if (!force && hit && Date.now() - Date.parse(hit.at) < TTL_MS) return hit;
+async function getMetalQuote(
+  metal: "XAU" | "XAG",
+  force: boolean
+): Promise<GoldQuote | null> {
+  const admin = createAdminClient();
+  const fetchGram = async () =>
+    (await fetchSwissquoteGram(metal)) ?? (await fetchGoldApiGram("USD", metal));
 
-  // Free public feed first; goldapi only as a keyed fallback.
-  let gram24k = await fetchSwissquoteGram();
-  if (gram24k == null) gram24k = await fetchGoldApiGram("USD");
-  if (gram24k == null || !Number.isFinite(gram24k) || gram24k <= 0) return hit ?? null;
-
-  const quote: GoldQuote = { gram24k, currency: "USD", at: new Date().toISOString() };
-  cache[key] = quote;
-  // A cache-write failure (read-only FS) must not discard a good quote.
-  try {
-    await writeCache(cache);
-  } catch {
-    /* ignore */
+  // Production: shared DB cache.
+  if (admin) {
+    const dbKey = `metal:${metal}`;
+    const hit = await dbCacheGet(admin, dbKey);
+    if (!force && hit && Date.now() - Date.parse(hit.at) < TTL_MS) {
+      return hit.data as GoldQuote;
+    }
+    const gram = await fetchGram();
+    if (gram == null || !Number.isFinite(gram) || gram <= 0) {
+      return (hit?.data as GoldQuote) ?? null; // upstream down → last-known
+    }
+    const quote: GoldQuote = { gram24k: gram, currency: "USD", at: new Date().toISOString() };
+    await dbCacheSet(admin, dbKey, quote);
+    return quote;
   }
-  return quote;
-}
 
-/**
- * Live silver spot in USD (per-gram), cached like gold. Used for the silver
- * nisab threshold in the Zakat calculator. `gram24k` here is simply the per-gram
- * pure-silver price (the field name is shared with the gold quote type).
- */
-export async function getUsdSilverQuote(force = false): Promise<GoldQuote | null> {
-  const key = "XAG:USD";
+  // Local mode: on-disk cache.
+  const key = `${metal}:USD`;
   const cache = await readCache();
   const hit = cache[key];
   if (!force && hit && Date.now() - Date.parse(hit.at) < TTL_MS) return hit;
 
-  let gram = await fetchSwissquoteGram("XAG");
-  if (gram == null) gram = await fetchGoldApiGram("USD", "XAG");
+  const gram = await fetchGram();
   if (gram == null || !Number.isFinite(gram) || gram <= 0) return hit ?? null;
 
   const quote: GoldQuote = { gram24k: gram, currency: "USD", at: new Date().toISOString() };
@@ -187,6 +185,23 @@ export async function getUsdSilverQuote(force = false): Promise<GoldQuote | null
 }
 
 /**
+ * International gold spot in USD (per-gram 24k) — the source of truth. Callers
+ * convert into each holding's currency with the user's own FX rates. `force`
+ * bypasses the cache so an explicit user refresh always re-fetches.
+ */
+export function getUsdGoldQuote(force = false): Promise<GoldQuote | null> {
+  return getMetalQuote("XAU", force);
+}
+
+/**
+ * Live silver spot in USD (per-gram) for the Zakat silver nisab. `gram24k` holds
+ * the per-gram pure-silver price (the field name is shared with the gold quote).
+ */
+export function getUsdSilverQuote(force = false): Promise<GoldQuote | null> {
+  return getMetalQuote("XAG", force);
+}
+
+/**
  * Live FX rates as "USD value of 1 unit of currency" — our numeraire convention
  * — for the currencies the app supports. Primary source is open.er-api.com (free,
  * no key); if it's unreachable we fall back to Fawaz Ahmed's currency-api (free,
@@ -195,7 +210,138 @@ export async function getUsdSilverQuote(force = false): Promise<GoldQuote | null
  * back to the last-known cached rates when BOTH sources fail (the caller then
  * layers its own defaults under these).
  */
+// FX moves at most once a day, so we refresh at most once a day for the whole
+// app. The shared DB row means the upstream API is hit ~once per TTL total, not
+// once per serverless instance / cold start.
+const FX_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const FX_CACHE_KEY = "fx:usd";
+
+// ── Shared DB cache (production) ─────────────────────────────────────────────
+// A single durable row per feed, read/written through the service-role client so
+// it's the same cache for every instance. Returns null (→ callers degrade) when
+// Supabase isn't configured (local mode) or on any error — never throws.
+async function dbCacheGet(
+  admin: SupabaseClient,
+  key: string
+): Promise<{ data: unknown; at: string } | null> {
+  try {
+    const { data, error } = await admin
+      .from("price_cache")
+      .select("data, fetched_at")
+      .eq("key", key)
+      .maybeSingle();
+    if (error || !data) return null;
+    const row = data as { data: unknown; fetched_at: string };
+    return { data: row.data, at: row.fetched_at };
+  } catch {
+    return null;
+  }
+}
+
+async function dbCacheSet(admin: SupabaseClient, key: string, value: unknown): Promise<void> {
+  try {
+    await admin
+      .from("price_cache")
+      .upsert(
+        { key, data: value, fetched_at: new Date().toISOString() },
+        { onConflict: "key" }
+      );
+  } catch {
+    // A cache-write failure must never break the request that triggered it.
+  }
+}
+
+/** Batch read (one query) — for per-item caches like crypto coins. */
+async function dbCacheGetMany(
+  admin: SupabaseClient,
+  keys: string[]
+): Promise<Map<string, { data: unknown; at: string }>> {
+  const out = new Map<string, { data: unknown; at: string }>();
+  if (keys.length === 0) return out;
+  try {
+    const { data, error } = await admin
+      .from("price_cache")
+      .select("key, data, fetched_at")
+      .in("key", keys);
+    if (error || !data) return out;
+    for (const row of data as { key: string; data: unknown; fetched_at: string }[])
+      out.set(row.key, { data: row.data, at: row.fetched_at });
+  } catch {
+    /* return whatever we have */
+  }
+  return out;
+}
+
+/** Batch upsert — writes only the keys that were refreshed this call. */
+async function dbCacheSetMany(
+  admin: SupabaseClient,
+  entries: { key: string; data: unknown }[]
+): Promise<void> {
+  if (entries.length === 0) return;
+  const at = new Date().toISOString();
+  try {
+    await admin
+      .from("price_cache")
+      .upsert(
+        entries.map((e) => ({ key: e.key, data: e.data, fetched_at: at })),
+        { onConflict: "key" }
+      );
+  } catch {
+    /* cache-write failure must never break the request */
+  }
+}
+
+/** CoinGecko USD price per coin id, sanitized. Returns only the ids it resolved
+ *  (missing/failed ids are simply absent); never throws. */
+async function fetchCoinGeckoUsd(ids: string[]): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  if (ids.length === 0) return out;
+  try {
+    const res = await timedFetch(
+      `https://api.coingecko.com/api/v3/simple/price?ids=${ids
+        .map(encodeURIComponent)
+        .join(",")}&vs_currencies=usd`,
+      { headers: { Accept: "application/json" }, cache: "no-store" }
+    );
+    if (!res.ok) return out;
+    const raw: unknown = await res.json();
+    const data =
+      raw && typeof raw === "object"
+        ? (raw as Record<string, { usd?: unknown }>)
+        : {};
+    for (const id of ids) {
+      const p = sane(data[id]?.usd, MAX_COIN_USD);
+      if (p != null) out[id] = p;
+    }
+  } catch {
+    /* return what we have */
+  }
+  return out;
+}
+
+/** Primary → fallback FX fetch → "USD value of 1 unit" map, or null if both fail. */
+async function fetchFxMap(): Promise<Record<string, number> | null> {
+  const perUsd = (await fetchErApiRates()) ?? (await fetchFawazRates());
+  return perUsd ? fxFromPerUsd(perUsd) : null;
+}
+
 export async function getFxRatesUsd(force = false): Promise<Record<string, number>> {
+  const admin = createAdminClient();
+
+  // Production (Supabase): the shared DB row is the source of truth. Reads never
+  // touch the upstream API; only a stale (or forced) read re-fetches and stores.
+  if (admin) {
+    const hit = await dbCacheGet(admin, FX_CACHE_KEY);
+    if (!force && hit && Date.now() - Date.parse(hit.at) < FX_TTL_MS) {
+      return hit.data as Record<string, number>;
+    }
+    const fresh = await fetchFxMap();
+    if (!fresh) return (hit?.data as Record<string, number>) ?? {}; // sources down → last-known
+    await dbCacheSet(admin, FX_CACHE_KEY, fresh);
+    return fresh;
+  }
+
+  // Local mode (no Supabase): fall back to the on-disk cache.
   const cache = await readCache();
   const cachedRates = (): Record<string, number> => {
     const out: Record<string, number> = {};
@@ -204,15 +350,13 @@ export async function getFxRatesUsd(force = false): Promise<Record<string, numbe
     return out;
   };
   const at = cache["FX:__at__"];
-  if (!force && at && Date.now() - Date.parse(at.at) < TTL_MS) return cachedRates();
+  if (!force && at && Date.now() - Date.parse(at.at) < FX_TTL_MS) return cachedRates();
 
-  // Primary → fallback. Each returns a raw units-per-USD map (or null on failure).
-  const perUsd = (await fetchErApiRates()) ?? (await fetchFawazRates());
-  if (!perUsd) return cachedRates(); // both sources down → keep last-known
+  const fresh = await fetchFxMap();
+  if (!fresh) return cachedRates(); // both sources down → keep last-known
 
-  const out = fxFromPerUsd(perUsd);
   const stamp = new Date().toISOString();
-  for (const [code, usdPerUnit] of Object.entries(out)) {
+  for (const [code, usdPerUnit] of Object.entries(fresh)) {
     if (code === "USD") continue;
     cache[`FX:${code}`] = { gram24k: usdPerUnit, currency: code, at: stamp };
   }
@@ -222,7 +366,7 @@ export async function getFxRatesUsd(force = false): Promise<Record<string, numbe
   } catch {
     /* ignore */
   }
-  return out;
+  return fresh;
 }
 
 /** open.er-api.com → raw units-per-USD map (UPPERCASE codes), or null on failure. */
@@ -283,8 +427,42 @@ export async function getCryptoPricesUsd(
   const unique = [...new Set(ids)].filter(Boolean);
   if (unique.length === 0) return {};
 
-  const cache = await readCache();
+  const admin = createAdminClient();
   const out: Record<string, number> = {};
+
+  // Production: shared DB cache, one row per coin (`crypto:<id>`).
+  if (admin) {
+    const cached = await dbCacheGetMany(admin, unique.map((id) => `crypto:${id}`));
+    const missing: string[] = [];
+    for (const id of unique) {
+      const hit = cached.get(`crypto:${id}`);
+      if (!force && hit && Date.now() - Date.parse(hit.at) < TTL_MS) {
+        out[id] = (hit.data as GoldQuote).gram24k;
+      } else {
+        missing.push(id);
+      }
+    }
+    if (missing.length === 0) return out;
+
+    const fetched = await fetchCoinGeckoUsd(missing);
+    const at = new Date().toISOString();
+    const toWrite: { key: string; data: unknown }[] = [];
+    for (const id of missing) {
+      const p = fetched[id];
+      if (p != null) {
+        out[id] = p;
+        toWrite.push({ key: `crypto:${id}`, data: { gram24k: p, currency: "USD", at } });
+      } else {
+        const hit = cached.get(`crypto:${id}`);
+        if (hit) out[id] = (hit.data as GoldQuote).gram24k; // stale but better than nothing
+      }
+    }
+    await dbCacheSetMany(admin, toWrite);
+    return out;
+  }
+
+  // Local mode: on-disk cache.
+  const cache = await readCache();
   const missing: string[] = [];
   for (const id of unique) {
     const hit = cache[`CRYPTO:${id}`];
@@ -293,41 +471,21 @@ export async function getCryptoPricesUsd(
   }
   if (missing.length === 0) return out;
 
-  try {
-    const res = await timedFetch(
-      `https://api.coingecko.com/api/v3/simple/price?ids=${missing
-        .map(encodeURIComponent)
-        .join(",")}&vs_currencies=usd`,
-      { headers: { Accept: "application/json" }, cache: "no-store" }
-    );
-    if (res.ok) {
-      const raw: unknown = await res.json();
-      const data =
-        raw && typeof raw === "object"
-          ? (raw as Record<string, { usd?: unknown }>)
-          : {}; // unexpected shape → treat as empty, fall through to last-known
-      const at = new Date().toISOString();
-      for (const id of missing) {
-        const p = sane(data[id]?.usd, MAX_COIN_USD);
-        if (p != null) {
-          out[id] = p;
-          cache[`CRYPTO:${id}`] = { gram24k: p, currency: "USD", at };
-        } else if (cache[`CRYPTO:${id}`]) {
-          out[id] = cache[`CRYPTO:${id}`].gram24k; // stale but better than nothing
-        }
-      }
-      try {
-        await writeCache(cache);
-      } catch {
-        /* ignore */
-      }
-    } else {
-      for (const id of missing)
-        if (cache[`CRYPTO:${id}`]) out[id] = cache[`CRYPTO:${id}`].gram24k;
+  const fetched = await fetchCoinGeckoUsd(missing);
+  const at = new Date().toISOString();
+  for (const id of missing) {
+    const p = fetched[id];
+    if (p != null) {
+      out[id] = p;
+      cache[`CRYPTO:${id}`] = { gram24k: p, currency: "USD", at };
+    } else if (cache[`CRYPTO:${id}`]) {
+      out[id] = cache[`CRYPTO:${id}`].gram24k; // stale but better than nothing
     }
+  }
+  try {
+    await writeCache(cache);
   } catch {
-    for (const id of missing)
-      if (cache[`CRYPTO:${id}`]) out[id] = cache[`CRYPTO:${id}`].gram24k;
+    /* ignore */
   }
   return out;
 }

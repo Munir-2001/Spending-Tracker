@@ -47,6 +47,9 @@ export type AccountRow = {
   institution: string | null;
   mask: string | null;
   account_number: string | null; // encrypted at rest
+  swift: string | null; // BIC — public bank identifier
+  iban: string | null; // encrypted at rest
+  branch: string | null; // branch name/code — encrypted at rest
   currency: string;
   opening_balance: number; // minor units of `currency`
   is_active: boolean;
@@ -92,6 +95,10 @@ export type TransactionRow = {
   not_income: boolean;
   // For a repayment inflow: the reimbursable transaction it settles.
   settles_id: string | null;
+  // For an invoice-payment inflow: the invoice it pays (see 0016). Optional on
+  // write (column defaults NULL); always present on read. Set only by
+  // markInvoicePaid/recordInvoicePayment so paid invoices count as income.
+  invoice_id?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -157,6 +164,7 @@ export type UserSettingsRow = {
   base_currency: string;
   rates: Record<string, number>;
   default_account_id: string | null;
+  timezone: string | null; // IANA tz for local-night net-worth snapshots
   updated_at: string;
 };
 
@@ -255,6 +263,99 @@ export type RecurringRow = {
   updated_at: string;
 };
 
+// ── Invoicing (business tier) ───────────────────────────────────────────────
+
+/** A billable customer. All PII columns are encrypted at rest. */
+export type ClientRow = {
+  id: string;
+  user_id: string;
+  org_id: string | null;
+  name: string; // encrypted
+  email: string | null; // encrypted
+  phone: string | null; // encrypted
+  address: string | null; // encrypted (multi-line)
+  tax_id: string | null; // encrypted
+  currency: string; // default billing currency
+  notes: string | null; // encrypted
+  created_at: string;
+  updated_at: string;
+};
+
+export type InvoiceStatus =
+  | "draft"
+  | "sent"
+  | "viewed"
+  | "partial"
+  | "paid"
+  | "overdue"
+  | "void";
+
+/**
+ * A billing document. Totals are minor units and always recomputed server-side
+ * from the lines — never trusted from the client. `status` is stored, but the
+ * "overdue" reading is derived at read time (due_date past & not fully paid).
+ */
+export type InvoiceRow = {
+  id: string;
+  user_id: string;
+  org_id: string | null;
+  client_id: string | null;
+  number: string; // "INV-0007", unique per user
+  status: InvoiceStatus;
+  issue_date: string; // iso date
+  due_date: string; // iso date
+  currency: string;
+  subtotal: number; // cents, Σ line amounts pre-tax/discount
+  discount_total: number; // cents
+  tax_total: number; // cents, Σ per-line tax
+  total: number; // cents, subtotal - discount + tax
+  amount_paid: number; // cents, 0..total
+  account_id: string | null; // account a payment lands in
+  payment_account_id: string | null; // receiving bank shown on the invoice
+  notes: string | null; // encrypted, customer-facing
+  terms: string | null; // encrypted, payment terms / footer
+  public_token: string | null; // unguessable share/PDF link token
+  sent_at: string | null;
+  paid_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/**
+ * A receiving bank account shown on invoices so clients know where to pay.
+ * Personal fields (title/number/IBAN/branch/notes) are encrypted at rest.
+ */
+export type PaymentAccountRow = {
+  id: string;
+  user_id: string;
+  org_id: string | null;
+  label: string; // nickname
+  account_name: string; // account title / holder (encrypted)
+  bank_name: string | null;
+  account_number: string | null; // encrypted
+  iban: string | null; // encrypted
+  swift: string | null; // BIC
+  branch_code: string | null; // encrypted
+  currency: string;
+  notes: string | null; // encrypted
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+/** A single invoice line item, with its own tax rate (VAT/GST-style). */
+export type InvoiceLineRow = {
+  id: string;
+  invoice_id: string;
+  description: string; // encrypted
+  quantity: number; // may be fractional (hours/units)
+  unit_price: number; // cents
+  amount: number; // cents = round(quantity * unit_price)
+  tax_rate: number | null; // percent 0..100; null = no tax
+  sort_order: number;
+  created_at: string;
+};
+
 /** Maps a table name to its row type — used by the generic data store. */
 export type TableMap = {
   profiles: ProfileRow;
@@ -270,6 +371,10 @@ export type TableMap = {
   user_settings: UserSettingsRow;
   feedback: FeedbackRow;
   net_worth_snapshots: NetWorthSnapshotRow;
+  clients: ClientRow;
+  invoices: InvoiceRow;
+  invoice_lines: InvoiceLineRow;
+  payment_accounts: PaymentAccountRow;
 };
 
 export type TableName = keyof TableMap;
@@ -374,6 +479,9 @@ export type NewAccountInput = {
   currency: string;
   institution: string | null;
   accountNumber: string | null;
+  swift?: string | null; // BIC — public bank identifier
+  iban?: string | null; // encrypted at rest
+  branch?: string | null; // branch name/code
   openingBalance: number; // minor units of `currency`
   parentId: string | null;
   isGroup: boolean;
@@ -399,6 +507,61 @@ export type NewRecurringInput = {
   cadence: RecurringCadence;
   nextDate: string;
   autoPost: boolean;
+};
+
+/** Input for creating/editing a client (UI-facing, camelCase). */
+export type NewClientInput = {
+  name: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  taxId: string | null;
+  currency: string;
+  notes: string | null;
+};
+
+/** A single invoice line when creating/editing an invoice (UI-facing). */
+export type NewInvoiceLine = {
+  description: string;
+  quantity: number; // may be fractional
+  unitPrice: number; // minor units
+  taxRate?: number | null; // percent 0..100; null/omit = no tax
+};
+
+/** Input for creating/editing an invoice (UI-facing, camelCase). */
+export type NewInvoiceInput = {
+  clientId: string;
+  issueDate: string;
+  dueDate: string;
+  currency: string;
+  discountTotal?: number; // minor units, applied to subtotal
+  accountId?: string | null; // where a payment will land
+  paymentAccountId?: string | null; // receiving bank shown on the invoice
+  notes?: string | null;
+  terms?: string | null;
+  lines: NewInvoiceLine[];
+};
+
+/** Input for creating/editing a receiving bank account (UI-facing). */
+export type NewPaymentAccountInput = {
+  label: string;
+  accountName: string;
+  bankName: string | null;
+  accountNumber: string | null;
+  iban: string | null;
+  swift: string | null;
+  branchCode: string | null;
+  currency: string;
+  notes: string | null;
+  isDefault: boolean;
+};
+
+/** Input for recording a (possibly partial) invoice payment. */
+export type InvoicePaymentInput = {
+  invoiceId: string;
+  accountId: string;
+  amount: number; // positive minor units, in the invoice's currency
+  date: string;
 };
 
 /** The single demo user until Supabase Auth is wired. */

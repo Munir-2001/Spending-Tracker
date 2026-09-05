@@ -13,6 +13,9 @@ import {
   ChartPie,
   BookOpen,
   HandCoins,
+  FileText,
+  Users,
+  Landmark,
   Tag,
   Repeat,
   PiggyBank,
@@ -72,6 +75,14 @@ const navGroups = [
       { title: "Zakat", href: "/zakat", icon: HandHeart },
       { title: "Recurring", href: "/recurring", icon: CalendarClock },
       { title: "Subscriptions", href: "/subscriptions", icon: Repeat },
+    ],
+  },
+  {
+    label: "Invoicing",
+    items: [
+      { title: "Invoices", href: "/invoices", icon: FileText },
+      { title: "Clients", href: "/clients", icon: Users },
+      { title: "Payment methods", href: "/payment-methods", icon: Landmark },
     ],
   },
   {

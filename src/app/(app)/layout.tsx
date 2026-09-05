@@ -7,6 +7,7 @@ import { ModeToggle } from "@/components/mode-toggle";
 import { PrivacyToggle } from "@/components/privacy-toggle";
 import { PrivacyGate } from "@/components/privacy-gate";
 import { TransactionsProvider } from "@/components/transactions/transactions-provider";
+import { InvoicesProvider } from "@/components/invoices/invoices-provider";
 import { NewTransactionButton } from "@/components/transactions/new-transaction-button";
 import { RouteProgress } from "@/components/ui/route-progress";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
@@ -18,7 +19,10 @@ import {
   listAllLots,
   listBudgets,
   listCategories,
+  listClients,
   listGoals,
+  listInvoices,
+  listPaymentAccounts,
   listNetWorthSnapshots,
   listRecurring,
   listTransactions,
@@ -47,6 +51,11 @@ export default async function AppLayout({
   let initialLots: Awaited<ReturnType<typeof listAllLots>> = [];
   let initialGoals: Awaited<ReturnType<typeof listGoals>> = [];
   let initialRecurring: Awaited<ReturnType<typeof listRecurring>> = [];
+  let initialClients: Awaited<ReturnType<typeof listClients>> = [];
+  let initialInvoices: Awaited<ReturnType<typeof listInvoices>> = [];
+  let initialPaymentAccounts: Awaited<
+    ReturnType<typeof listPaymentAccounts>
+  > = [];
   let initialSnapshots: Awaited<ReturnType<typeof listNetWorthSnapshots>> = [];
   let initialSettings: Awaited<ReturnType<typeof getSettings>> = {
     baseCurrency: "USD",
@@ -65,6 +74,9 @@ export default async function AppLayout({
       initialLots,
       initialGoals,
       initialRecurring,
+      initialClients,
+      initialInvoices,
+      initialPaymentAccounts,
       initialSnapshots,
       initialSettings,
       user,
@@ -77,6 +89,9 @@ export default async function AppLayout({
       listAllLots(),
       listGoals(),
       listRecurring(),
+      listClients(),
+      listInvoices(),
+      listPaymentAccounts(),
       listNetWorthSnapshots(),
       getSettings(),
       getCurrentUser(),
@@ -113,6 +128,11 @@ export default async function AppLayout({
         initialSnapshots={initialSnapshots}
         initialSettings={initialSettings}
       >
+      <InvoicesProvider
+        initialClients={initialClients}
+        initialInvoices={initialInvoices}
+        initialPaymentAccounts={initialPaymentAccounts}
+      >
         <AppSidebar user={user} />
         <SidebarInset className="bg-background">
         <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b border-border/60 bg-background/80 px-4 backdrop-blur-md md:px-6">
@@ -132,6 +152,7 @@ export default async function AppLayout({
         </header>
         <main className="flex-1">{children}</main>
         </SidebarInset>
+      </InvoicesProvider>
       </TransactionsProvider>
       </ConfirmProvider>
     </SidebarProvider>

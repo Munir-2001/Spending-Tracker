@@ -9,6 +9,7 @@ import type {
   AssetType,
   BudgetPeriod,
   CategoryKind,
+  InvoiceStatus,
   MetalUnit,
   RecurringCadence,
 } from "@/lib/schema";
@@ -52,6 +53,9 @@ export type Account = {
   name: string;
   institution: string | null;
   accountNumber: string | null; // decrypted for the owner; shown masked
+  swift: string | null; // BIC — public bank identifier
+  iban: string | null; // decrypted for the owner
+  branch: string | null; // branch name/code
   type: "asset" | "liability";
   subtype: AccountSubtype | null;
   currency: string;
@@ -104,6 +108,8 @@ export type Transaction = {
   notIncome?: boolean;
   /** For a repayment inflow: the id of the reimbursable transaction it settles. */
   settlesId?: string;
+  /** For an invoice-payment inflow: the id of the invoice it pays. */
+  invoiceId?: string | null;
   /** Free-text note (transfer memo, refund reference, etc.). */
   notes?: string;
 };
@@ -145,6 +151,76 @@ export type RecurringRule = {
   autoPost: boolean;
   lastPosted: string | null;
   active: boolean;
+};
+
+// ── Invoicing (business tier) ───────────────────────────────────────────────
+
+/** A billable customer (decrypted for the owner). */
+export type Client = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  address: string | null;
+  taxId: string | null;
+  currency: string;
+  notes: string | null;
+};
+
+/** A receiving bank account shown on invoices (decrypted for the owner). */
+export type PaymentAccount = {
+  id: string;
+  label: string;
+  accountName: string;
+  bankName: string | null;
+  accountNumber: string | null;
+  iban: string | null;
+  swift: string | null;
+  branchCode: string | null;
+  currency: string;
+  notes: string | null;
+  isDefault: boolean;
+};
+
+/** A single invoice line item, with its own tax rate. */
+export type InvoiceLine = {
+  id: string;
+  description: string;
+  quantity: number; // may be fractional
+  unitPrice: number; // minor units
+  amount: number; // minor units = round(quantity * unitPrice)
+  taxRate: number | null; // percent 0..100; null = no tax
+};
+
+/**
+ * A billing document. All money is minor units of `currency`. `overdue` is a
+ * derived reading (due date past and not fully paid) surfaced alongside the
+ * stored status. Lines are attached when a single invoice is loaded.
+ */
+export type Invoice = {
+  id: string;
+  clientId: string | null;
+  number: string;
+  status: InvoiceStatus;
+  overdue: boolean; // derived: due_date past & amountPaid < total & not paid/void
+  issueDate: string;
+  dueDate: string;
+  currency: string;
+  subtotal: number;
+  discountTotal: number;
+  taxTotal: number;
+  total: number;
+  amountPaid: number;
+  accountId: string | null;
+  paymentAccountId: string | null;
+  notes: string | null;
+  terms: string | null;
+  publicToken: string | null;
+  sentAt: string | null;
+  paidAt: string | null;
+  lines?: InvoiceLine[];
+  /** Resolved receiving-bank details, attached when a single invoice is loaded. */
+  paymentAccount?: PaymentAccount | null;
 };
 
 /**

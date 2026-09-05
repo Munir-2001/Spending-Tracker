@@ -11,6 +11,10 @@ import {
   accountToUi,
   assetToUi,
   categoryToUi,
+  clientToUi,
+  invoiceLineToUi,
+  invoiceToUi,
+  paymentAccountToUi,
   lineToUi,
   snapshotToUi,
   transactionToUi,
@@ -41,6 +45,15 @@ import {
   type TransactionLineRow,
   type TransactionRow,
   type UserSettingsRow,
+  type ClientRow,
+  type InvoiceRow,
+  type InvoiceLineRow,
+  type InvoiceStatus,
+  type PaymentAccountRow,
+  type NewClientInput,
+  type NewInvoiceInput,
+  type NewPaymentAccountInput,
+  type InvoicePaymentInput,
   type TableMap,
   type TableName,
 } from "@/lib/schema";
@@ -50,8 +63,11 @@ import type {
   AssetLot,
   Budget,
   Category,
+  Client,
   Feedback,
   Goal,
+  Invoice,
+  PaymentAccount,
   NetWorthSnapshot,
   RecurringRule,
   Transaction,
@@ -59,6 +75,8 @@ import type {
 } from "@/lib/data";
 import { DEFAULT_BASE_CURRENCY, DEFAULT_RATES, toMinorUnits } from "@/lib/currency";
 import { partialSale } from "@/lib/compute";
+import { invoiceTotals, lineAmount } from "@/lib/invoice";
+import { keepIfEmpty } from "@/lib/patch";
 import { goldValueMajor, gramsOf, GRAMS_PER_UNIT } from "@/lib/gold";
 import {
   getUsdGoldQuote,
@@ -99,6 +117,7 @@ async function updateOwned<T extends TableName>(
 async function removeOwned<T extends TableName>(table: T, id: string): Promise<boolean> {
   return db.remove(table, id, await getUserId());
 }
+
 
 /** Name + email of the signed-in user, for the sidebar. */
 export async function getCurrentUser(): Promise<{
@@ -240,9 +259,9 @@ export async function updateAsset(
     type: input.type,
     value: input.value,
     currency: input.currency,
-    note: enc(input.note),
     ...marketFields(input),
     updated_at: new Date().toISOString(),
+    ...keepIfEmpty({ note: enc(input.note) }),
   });
   revalidateAssetViews();
   return updated ? assetToUi(updated) : null;
@@ -508,8 +527,8 @@ export async function updateAssetLot(
     tax: input.tax,
     cost_basis: input.goldCost + input.commission + input.tax,
     currency: input.currency,
-    note: enc(input.note ?? null),
     updated_at: new Date().toISOString(),
+    ...keepIfEmpty({ note: enc(input.note ?? null) }),
   });
   if (updated) await recomputeAssetFromLots(updated.asset_id);
   revalidateAssetViews();
@@ -640,6 +659,9 @@ export async function createAccount(raw: NewAccountInput): Promise<Account> {
     institution: enc(input.institution),
     mask: null,
     account_number: input.isGroup ? null : enc(input.accountNumber),
+    swift: input.isGroup ? null : (input.swift ?? null),
+    iban: input.isGroup ? null : enc(input.iban ?? null),
+    branch: input.isGroup ? null : enc(input.branch ?? null),
     currency: input.currency,
     opening_balance: input.isGroup ? 0 : input.openingBalance,
     is_active: true,
@@ -658,19 +680,28 @@ export async function updateAccount(
 ): Promise<Account | null> {
   const input = v.accountInput.parse(raw) as NewAccountInput;
   v.idInput.parse(id);
-  const patch: Partial<AccountRow> = {
+  const base: Partial<AccountRow> = {
     parent_id: input.parentId,
     is_group: input.isGroup,
     name: enc(input.name)!,
     type: input.type,
     subtype: input.isGroup ? null : input.subtype,
     normal_balance: input.type === "asset" ? "debit" : "credit",
-    institution: enc(input.institution),
-    account_number: input.isGroup ? null : enc(input.accountNumber),
     currency: input.currency,
     opening_balance: input.isGroup ? 0 : input.openingBalance,
   };
-  const updated = await updateOwned("accounts", id, patch);
+  // Bank details: a group clears them explicitly; a real account preserves any
+  // field left blank so an edit never wipes a saved value (see keepIfEmpty).
+  const bankText: Partial<AccountRow> = input.isGroup
+    ? { institution: null, account_number: null, swift: null, iban: null, branch: null }
+    : keepIfEmpty({
+        institution: enc(input.institution),
+        account_number: enc(input.accountNumber),
+        swift: input.swift ?? null,
+        iban: enc(input.iban ?? null),
+        branch: enc(input.branch ?? null),
+      });
+  const updated = await updateOwned("accounts", id, { ...base, ...bankText });
   revalidatePath("/");
   revalidatePath("/accounts");
   return updated ? accountToUi(updated) : null;
@@ -1232,6 +1263,23 @@ export async function getZakatMetals(): Promise<{
   };
 }
 
+/**
+ * Persist the browser's IANA timezone so the snapshot cron can take each user's
+ * net-worth snapshot at their own local end-of-day. Cheap no-op in local mode
+ * (single user) and when the value is unchanged. The user_settings row always
+ * exists (created by an auth trigger), so a plain update suffices.
+ */
+export async function saveUserTimezone(tz: string): Promise<void> {
+  if (!SUPABASE_CONFIGURED) return;
+  if (typeof tz !== "string" || tz.length < 1 || tz.length > 64) return;
+  const userId = await getUserId();
+  const supabase = await createClient();
+  await supabase
+    .from("user_settings")
+    .update({ timezone: tz, updated_at: new Date().toISOString() })
+    .eq("user_id", userId);
+}
+
 export async function getSettings(): Promise<AppSettings> {
   // Live rates (cached ~12h) drive conversions; a stored override is a fallback
   // under them, and the built-in defaults sit under that.
@@ -1612,4 +1660,436 @@ export async function runDueRecurring(): Promise<{
     revalidateRecurringViews();
   }
   return { transactions: created, rules: touched };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Invoicing (business tier)
+//
+// Invoices are documents; the transactions table stays the single ledger. A
+// paid invoice counts as income by posting an ordinary positive `transactions`
+// row (invoice_id set, none of the not-income flags) — so the existing income /
+// cashflow / net-worth engine picks it up unchanged. Totals are always
+// recomputed server-side from the lines; the client total is never trusted.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Today as yyyy-mm-dd (server clock) — used to derive `overdue`. */
+function todayIso(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function revalidateInvoiceViews() {
+  revalidatePath("/");
+  revalidatePath("/invoices");
+  revalidatePath("/clients");
+}
+
+/** Next gap-free invoice number for this user, formatted INV-%04d. */
+async function nextInvoiceNumber(): Promise<string> {
+  const rows = (await db.selectAll("invoices")) as InvoiceRow[];
+  let max = 0;
+  for (const r of rows) {
+    const m = /(\d+)\s*$/.exec(r.number ?? "");
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `INV-${String(max + 1).padStart(4, "0")}`;
+}
+
+/** Build persist-ready invoice_line rows (descriptions encrypted). */
+function buildInvoiceLines(
+  invoiceId: string,
+  lines: NewInvoiceInput["lines"],
+  now: string
+): InvoiceLineRow[] {
+  return lines.map((l, i) => ({
+    id: randomUUID(),
+    invoice_id: invoiceId,
+    description: enc(l.description)!,
+    quantity: l.quantity,
+    unit_price: l.unitPrice,
+    amount: lineAmount(l),
+    tax_rate: l.taxRate ?? null,
+    sort_order: i,
+    created_at: now,
+  }));
+}
+
+// ── Clients ──────────────────────────────────────────────────────────────────
+
+export async function listClients(): Promise<Client[]> {
+  const rows = (await db.selectAll("clients")) as ClientRow[];
+  return rows.map(clientToUi);
+}
+
+// Named `addClient` (not `createClient`) to avoid colliding with the Supabase
+// `createClient` factory imported above.
+export async function addClient(raw: NewClientInput): Promise<Client> {
+  const input = v.clientInput.parse(raw) as NewClientInput;
+  const userId = await getUserId();
+  const now = new Date().toISOString();
+  const row: ClientRow = {
+    id: randomUUID(),
+    user_id: userId,
+    org_id: null,
+    name: enc(input.name)!,
+    email: enc(input.email),
+    phone: enc(input.phone),
+    address: enc(input.address),
+    tax_id: enc(input.taxId),
+    currency: input.currency,
+    notes: enc(input.notes),
+    created_at: now,
+    updated_at: now,
+  };
+  await db.insert("clients", row);
+  revalidateInvoiceViews();
+  return clientToUi(row);
+}
+
+export async function updateClient(
+  id: string,
+  raw: NewClientInput
+): Promise<Client | null> {
+  const input = v.clientInput.parse(raw) as NewClientInput;
+  const updated = await updateOwned("clients", id, {
+    name: enc(input.name)!,
+    currency: input.currency,
+    updated_at: new Date().toISOString(),
+    // Optional PII preserved when left blank — an edit never wipes saved details.
+    ...keepIfEmpty({
+      email: enc(input.email),
+      phone: enc(input.phone),
+      address: enc(input.address),
+      tax_id: enc(input.taxId),
+      notes: enc(input.notes),
+    }),
+  });
+  revalidateInvoiceViews();
+  return updated ? clientToUi(updated) : null;
+}
+
+export async function deleteClient(id: string): Promise<boolean> {
+  const ok = await removeOwned("clients", v.idInput.parse(id));
+  revalidateInvoiceViews();
+  return ok;
+}
+
+// ── Payment accounts (receiving bank details shown on invoices) ──────────────
+
+export async function listPaymentAccounts(): Promise<PaymentAccount[]> {
+  const rows = (await db.selectAll("payment_accounts")) as PaymentAccountRow[];
+  return rows
+    .map(paymentAccountToUi)
+    .sort((a, b) =>
+      a.isDefault === b.isDefault
+        ? a.label.localeCompare(b.label)
+        : a.isDefault
+          ? -1
+          : 1
+    );
+}
+
+/** Ensure only one default per user by clearing the flag on the others. */
+async function clearOtherDefaults(userId: string, exceptId: string) {
+  const rows = (await db.selectAll("payment_accounts")) as PaymentAccountRow[];
+  await Promise.all(
+    rows
+      .filter((r) => r.user_id === userId && r.is_default && r.id !== exceptId)
+      .map((r) => updateOwned("payment_accounts", r.id, { is_default: false }))
+  );
+}
+
+export async function addPaymentAccount(
+  raw: NewPaymentAccountInput
+): Promise<PaymentAccount> {
+  const input = v.paymentAccountInput.parse(raw) as NewPaymentAccountInput;
+  const userId = await getUserId();
+  const now = new Date().toISOString();
+  const row: PaymentAccountRow = {
+    id: randomUUID(),
+    user_id: userId,
+    org_id: null,
+    label: input.label,
+    account_name: enc(input.accountName)!,
+    bank_name: input.bankName,
+    account_number: enc(input.accountNumber),
+    iban: enc(input.iban),
+    swift: input.swift,
+    branch_code: enc(input.branchCode),
+    currency: input.currency,
+    notes: enc(input.notes),
+    is_default: input.isDefault,
+    created_at: now,
+    updated_at: now,
+  };
+  await db.insert("payment_accounts", row);
+  if (input.isDefault) await clearOtherDefaults(userId, row.id);
+  revalidateInvoiceViews();
+  return paymentAccountToUi(row);
+}
+
+export async function updatePaymentAccount(
+  id: string,
+  raw: NewPaymentAccountInput
+): Promise<PaymentAccount | null> {
+  const input = v.paymentAccountInput.parse(raw) as NewPaymentAccountInput;
+  const userId = await getUserId();
+  const updated = await updateOwned("payment_accounts", id, {
+    label: input.label,
+    account_name: enc(input.accountName)!,
+    currency: input.currency,
+    is_default: input.isDefault,
+    updated_at: new Date().toISOString(),
+    // Optional bank details preserved when left blank.
+    ...keepIfEmpty({
+      bank_name: input.bankName,
+      account_number: enc(input.accountNumber),
+      iban: enc(input.iban),
+      swift: input.swift,
+      branch_code: enc(input.branchCode),
+      notes: enc(input.notes),
+    }),
+  });
+  if (input.isDefault) await clearOtherDefaults(userId, id);
+  revalidateInvoiceViews();
+  return updated ? paymentAccountToUi(updated) : null;
+}
+
+export async function deletePaymentAccount(id: string): Promise<boolean> {
+  const ok = await removeOwned("payment_accounts", v.idInput.parse(id));
+  revalidateInvoiceViews();
+  return ok;
+}
+
+// ── Invoices ─────────────────────────────────────────────────────────────────
+
+export async function listInvoices(): Promise<Invoice[]> {
+  const rows = (await db.selectAll("invoices")) as InvoiceRow[];
+  const today = todayIso();
+  return rows
+    .map((r) => invoiceToUi(r, today))
+    .sort((a, b) => (a.issueDate < b.issueDate ? 1 : -1));
+}
+
+export async function getInvoice(id: string): Promise<Invoice | null> {
+  const row = (await db.findById("invoices", v.idInput.parse(id))) as
+    | InvoiceRow
+    | null;
+  if (!row) return null;
+  const lineRows = (await db.selectWhere("invoice_lines", {
+    invoice_id: row.id,
+  })) as InvoiceLineRow[];
+  const lines = lineRows
+    .sort((a, b) => a.sort_order - b.sort_order)
+    .map(invoiceLineToUi);
+  let paymentAccount: PaymentAccount | null = null;
+  if (row.payment_account_id) {
+    const pa = (await db.findById(
+      "payment_accounts",
+      row.payment_account_id
+    )) as PaymentAccountRow | null;
+    if (pa) paymentAccount = paymentAccountToUi(pa);
+  }
+  return invoiceToUi(row, todayIso(), lines, paymentAccount);
+}
+
+export async function createInvoice(raw: NewInvoiceInput): Promise<Invoice> {
+  const input = v.invoiceInput.parse(raw) as NewInvoiceInput;
+  const userId = await getUserId();
+  const now = new Date().toISOString();
+  const id = randomUUID();
+  const discount = input.discountTotal ?? 0;
+  const { subtotal, taxTotal, total } = invoiceTotals(input.lines, discount);
+  const row: InvoiceRow = {
+    id,
+    user_id: userId,
+    org_id: null,
+    client_id: input.clientId,
+    number: await nextInvoiceNumber(),
+    status: "draft",
+    issue_date: input.issueDate,
+    due_date: input.dueDate,
+    currency: input.currency,
+    subtotal,
+    discount_total: discount,
+    tax_total: taxTotal,
+    total,
+    amount_paid: 0,
+    account_id: input.accountId ?? null,
+    payment_account_id: input.paymentAccountId ?? null,
+    notes: enc(input.notes ?? null),
+    terms: enc(input.terms ?? null),
+    public_token: null,
+    sent_at: null,
+    paid_at: null,
+    created_at: now,
+    updated_at: now,
+  };
+  await db.insert("invoices", row);
+  for (const l of buildInvoiceLines(id, input.lines, now)) {
+    await db.insert("invoice_lines", l);
+  }
+  revalidateInvoiceViews();
+  return invoiceToUi(row, todayIso());
+}
+
+export async function updateInvoice(
+  id: string,
+  raw: NewInvoiceInput
+): Promise<Invoice | null> {
+  const input = v.invoiceInput.parse(raw) as NewInvoiceInput;
+  const existing = (await db.findById("invoices", id)) as InvoiceRow | null;
+  if (!existing) return null;
+  // Only drafts are editable; sent/paid invoices are immutable documents.
+  if (existing.status !== "draft") {
+    throw new Error("Only draft invoices can be edited");
+  }
+  const now = new Date().toISOString();
+  const discount = input.discountTotal ?? 0;
+  const { subtotal, taxTotal, total } = invoiceTotals(input.lines, discount);
+  const updated = await updateOwned("invoices", id, {
+    client_id: input.clientId,
+    issue_date: input.issueDate,
+    due_date: input.dueDate,
+    currency: input.currency,
+    subtotal,
+    discount_total: discount,
+    tax_total: taxTotal,
+    total,
+    account_id: input.accountId ?? null,
+    payment_account_id: input.paymentAccountId ?? null,
+    updated_at: now,
+    ...keepIfEmpty({
+      notes: enc(input.notes ?? null),
+      terms: enc(input.terms ?? null),
+    }),
+  });
+  // Replace the line items wholesale.
+  const oldLines = (await db.selectWhere("invoice_lines", {
+    invoice_id: id,
+  })) as InvoiceLineRow[];
+  for (const l of oldLines) await db.remove("invoice_lines", l.id);
+  for (const l of buildInvoiceLines(id, input.lines, now)) {
+    await db.insert("invoice_lines", l);
+  }
+  revalidateInvoiceViews();
+  return updated ? invoiceToUi(updated, todayIso()) : null;
+}
+
+export async function deleteInvoice(id: string): Promise<boolean> {
+  const existing = (await db.findById("invoices", id)) as InvoiceRow | null;
+  if (existing && existing.status !== "draft") {
+    throw new Error("Only draft invoices can be deleted; void instead");
+  }
+  const lines = (await db.selectWhere("invoice_lines", {
+    invoice_id: id,
+  })) as InvoiceLineRow[];
+  for (const l of lines) await db.remove("invoice_lines", l.id);
+  const ok = await removeOwned("invoices", id);
+  revalidateInvoiceViews();
+  return ok;
+}
+
+/** Mark a draft as sent: stamp sent_at and mint the public share/PDF token. */
+export async function sendInvoice(id: string): Promise<Invoice | null> {
+  const now = new Date().toISOString();
+  const updated = await updateOwned("invoices", v.idInput.parse(id), {
+    status: "sent",
+    sent_at: now,
+    public_token: randomUUID().replace(/-/g, ""),
+    updated_at: now,
+  });
+  revalidateInvoiceViews();
+  return updated ? invoiceToUi(updated, todayIso()) : null;
+}
+
+/**
+ * Move a sent invoice back to draft ("unsend"). Retracts the public share link
+ * by clearing its token, so the shared URL stops resolving until it's sent
+ * again (which mints a fresh token). Blocked once any payment exists.
+ */
+export async function unsendInvoice(id: string): Promise<Invoice | null> {
+  const existing = (await db.findById("invoices", id)) as InvoiceRow | null;
+  if (existing) {
+    if (existing.amount_paid > 0)
+      throw new Error("Can't unsend an invoice that has payments");
+    if (existing.status !== "sent" && existing.status !== "viewed")
+      throw new Error("Only a sent invoice can be moved back to draft");
+  }
+  const updated = await updateOwned("invoices", v.idInput.parse(id), {
+    status: "draft",
+    sent_at: null,
+    public_token: null,
+    updated_at: new Date().toISOString(),
+  });
+  revalidateInvoiceViews();
+  return updated ? invoiceToUi(updated, todayIso()) : null;
+}
+
+export async function voidInvoice(id: string): Promise<Invoice | null> {
+  const existing = (await db.findById("invoices", id)) as InvoiceRow | null;
+  if (existing && existing.amount_paid > 0) {
+    throw new Error("Cannot void an invoice with recorded payments");
+  }
+  const updated = await updateOwned("invoices", v.idInput.parse(id), {
+    status: "void",
+    updated_at: new Date().toISOString(),
+  });
+  revalidateInvoiceViews();
+  return updated ? invoiceToUi(updated, todayIso()) : null;
+}
+
+/**
+ * Record a (possibly partial) payment against an invoice. Mirrors
+ * recordRepayment: posts a positive `transactions` inflow — but WITHOUT the
+ * is_reimbursement flag, so it counts as real income — links it via invoice_id,
+ * then advances the invoice's amount_paid/status.
+ */
+export async function markInvoicePaid(
+  raw: InvoicePaymentInput
+): Promise<{ invoice: Invoice | null; inflow: Transaction | null }> {
+  const input = v.invoicePaymentInput.parse(raw) as InvoicePaymentInput;
+  const userId = await getUserId();
+  const invoice = (await db.findById("invoices", input.invoiceId)) as
+    | InvoiceRow
+    | null;
+  if (!invoice) return { invoice: null, inflow: null };
+  const now = new Date().toISOString();
+
+  const inflow: TransactionRow = {
+    id: randomUUID(),
+    user_id: userId,
+    org_id: null,
+    account_id: input.accountId,
+    category_id: null,
+    date: input.date,
+    description: enc(`Invoice ${invoice.number} — payment`)!,
+    amount: Math.abs(input.amount),
+    currency: invoice.currency,
+    status: "posted",
+    source: "manual",
+    external_id: null,
+    notes: null,
+    ...noReimburse,
+    invoice_id: invoice.id,
+    created_at: now,
+    updated_at: now,
+  };
+  await db.insert("transactions", inflow);
+
+  const amountPaid = invoice.amount_paid + Math.abs(input.amount);
+  const fullyPaid = amountPaid >= invoice.total;
+  const status: InvoiceStatus = fullyPaid ? "paid" : "partial";
+  const updated = await updateOwned("invoices", invoice.id, {
+    amount_paid: amountPaid,
+    status,
+    paid_at: fullyPaid ? now : invoice.paid_at,
+    updated_at: now,
+  });
+
+  revalidateInvoiceViews();
+  revalidateTxnViews();
+  return {
+    invoice: updated ? invoiceToUi(updated, todayIso()) : null,
+    inflow: transactionToUi(inflow),
+  };
 }

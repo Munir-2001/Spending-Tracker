@@ -52,6 +52,9 @@ export const accountInput = z.object({
   currency,
   institution: optStr(120),
   accountNumber: optStr(64),
+  swift: z.string().trim().max(20).nullable().optional(),
+  iban: z.string().trim().max(64).nullable().optional(),
+  branch: z.string().trim().max(120).nullable().optional(),
   openingBalance: intAmount,
   parentId: idStr.nullable(),
   isGroup: z.boolean(),
@@ -213,6 +216,65 @@ export const feedbackInput = z.object({
   message: reqStr(4000),
   rating: z.number().int().min(1).max(5).nullable().optional(),
   page: z.string().trim().max(120).nullable().optional(),
+});
+
+// ── Invoicing ────────────────────────────────────────────────────────────────
+
+export const clientInput = z.object({
+  name: reqStr(120),
+  email: z.string().trim().max(200).nullable(),
+  phone: z.string().trim().max(40).nullable(),
+  address: z.string().trim().max(500).nullable(),
+  taxId: z.string().trim().max(60).nullable(),
+  currency,
+  notes: z.string().trim().max(1000).nullable(),
+});
+
+const invoiceLineInput = z.object({
+  description: reqStr(300),
+  // Fractional quantities allowed (hours/units); must be finite and > 0.
+  quantity: z
+    .number()
+    .refine((n) => Number.isFinite(n) && n > 0, "quantity must be > 0"),
+  unitPrice: intAmount, // signed allowed (credits), typically >= 0
+  taxRate: z
+    .number()
+    .refine((n) => Number.isFinite(n) && n >= 0 && n <= 100, "tax 0–100")
+    .nullable()
+    .optional(),
+});
+
+export const invoiceInput = z.object({
+  clientId: idStr,
+  issueDate: isoDate,
+  dueDate: isoDate,
+  currency,
+  discountTotal: intAmount.nonnegative().optional(),
+  accountId: idStr.nullable().optional(),
+  paymentAccountId: idStr.nullable().optional(),
+  notes: z.string().trim().max(2000).nullable().optional(),
+  terms: z.string().trim().max(2000).nullable().optional(),
+  lines: z.array(invoiceLineInput).min(1).max(200),
+});
+
+export const paymentAccountInput = z.object({
+  label: reqStr(80),
+  accountName: reqStr(120),
+  bankName: z.string().trim().max(120).nullable(),
+  accountNumber: z.string().trim().max(64).nullable(),
+  iban: z.string().trim().max(64).nullable(),
+  swift: z.string().trim().max(20).nullable(),
+  branchCode: z.string().trim().max(40).nullable(),
+  currency,
+  notes: z.string().trim().max(1000).nullable(),
+  isDefault: z.boolean(),
+});
+
+export const invoicePaymentInput = z.object({
+  invoiceId: idStr,
+  accountId: idStr,
+  amount: z.number().int().positive(),
+  date: isoDate,
 });
 
 export const idInput = idStr;

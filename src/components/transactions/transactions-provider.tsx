@@ -68,6 +68,7 @@ import {
   updateAsset as updateAssetAction,
   updateCategory as updateCategoryAction,
   updateSettings as updateSettingsAction,
+  saveUserTimezone as saveUserTimezoneAction,
   refreshRates as refreshRatesAction,
   updateTransaction,
   type AppSettings,
@@ -277,6 +278,17 @@ export function TransactionsProvider({
     initialSettings.defaultAccountId ?? null
   );
   const fx = useMemo(() => makeFx(baseCurrency, rates), [baseCurrency, rates]);
+
+  // Record the user's timezone once so the net-worth snapshot cron can take
+  // each daily snapshot at their own local end-of-day. Fire-and-forget.
+  useEffect(() => {
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz) saveUserTimezoneAction(tz).catch(() => {});
+    } catch {
+      /* Intl unavailable — cron falls back to UTC */
+    }
+  }, []);
 
   const updateSettings = useCallback(
     (s: AppSettings) => {

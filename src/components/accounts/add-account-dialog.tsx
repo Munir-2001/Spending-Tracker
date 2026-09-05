@@ -76,6 +76,9 @@ export function AddAccountDialog({
   const [currency, setCurrency] = useState("USD");
   const [institution, setInstitution] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
+  const [swift, setSwift] = useState("");
+  const [iban, setIban] = useState("");
+  const [branch, setBranch] = useState("");
   const [balance, setBalance] = useState("");
   const [parentId, setParentId] = useState<string>("none");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -95,6 +98,9 @@ export function AddAccountDialog({
       setCurrency(editing.currency);
       setInstitution(editing.institution ?? "");
       setAccountNumber(editing.accountNumber ?? "");
+      setSwift(editing.swift ?? "");
+      setIban(editing.iban ?? "");
+      setBranch(editing.branch ?? "");
       setBalance(
         editing.isGroup
           ? ""
@@ -109,6 +115,9 @@ export function AddAccountDialog({
       setCurrency("USD");
       setInstitution("");
       setAccountNumber("");
+      setSwift("");
+      setIban("");
+      setBranch("");
       setBalance("");
       setParentId("none");
     }
@@ -129,6 +138,9 @@ export function AddAccountDialog({
       currency,
       institution: institution.trim() || null,
       accountNumber: isGroup ? null : accountNumber.trim() || null,
+      swift: isGroup ? null : swift.trim().toUpperCase() || null,
+      iban: isGroup ? null : iban.trim() || null,
+      branch: isGroup ? null : branch.trim() || null,
       openingBalance: isGroup ? 0 : toMinorUnits(signed, currency),
       parentId: parentId === "none" ? null : parentId,
       isGroup,
@@ -331,6 +343,41 @@ export function AddAccountDialog({
                     🔒 Encrypted before it’s stored — the database never sees it
                     in plain text.
                   </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="acc-swift">SWIFT / BIC (optional)</Label>
+                  <Input
+                    id="acc-swift"
+                    value={swift}
+                    onChange={(e) => setSwift(e.target.value)}
+                    placeholder="MEZNPKKA"
+                    autoComplete="off"
+                    className="num uppercase"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="acc-iban">IBAN (optional)</Label>
+                  <Input
+                    id="acc-iban"
+                    value={iban}
+                    onChange={(e) => setIban(e.target.value)}
+                    placeholder="PK…"
+                    autoComplete="off"
+                    className="num"
+                  />
+                </div>
+
+                <div className="col-span-2 space-y-1.5">
+                  <Label htmlFor="acc-branch">Branch (optional)</Label>
+                  <Input
+                    id="acc-branch"
+                    value={branch}
+                    onChange={(e) => setBranch(e.target.value)}
+                    placeholder="Gulshan-e-Iqbal Branch, Karachi"
+                    autoComplete="off"
+                  />
                 </div>
               </div>
             </>

@@ -1,10 +1,15 @@
 import "server-only";
 
 import { dec } from "@/server/crypto";
+import { isOverdue } from "@/lib/invoice";
 import type {
   Account,
   Asset,
   Category,
+  Client,
+  Invoice,
+  InvoiceLine,
+  PaymentAccount,
   NetWorthSnapshot,
   Transaction,
   TransactionItem,
@@ -13,6 +18,10 @@ import type {
   AccountRow,
   AssetRow,
   CategoryRow,
+  ClientRow,
+  InvoiceRow,
+  InvoiceLineRow,
+  PaymentAccountRow,
   NetWorthSnapshotRow,
   TransactionLineRow,
   TransactionRow,
@@ -31,6 +40,9 @@ export function accountToUi(r: AccountRow): Account {
     name: dec(r.name) ?? "",
     institution: dec(r.institution),
     accountNumber: dec(r.account_number),
+    swift: r.swift ?? null,
+    iban: dec(r.iban),
+    branch: dec(r.branch),
     type: r.type === "liability" ? "liability" : "asset",
     subtype: r.subtype,
     currency: r.currency,
@@ -89,6 +101,7 @@ export function transactionToUi(
     isTransfer: r.is_transfer ?? false,
     notIncome: r.not_income ?? false,
     settlesId: r.settles_id ?? undefined,
+    invoiceId: r.invoice_id ?? null,
     notes: dec(r.notes) ?? undefined,
   };
 }
@@ -106,6 +119,84 @@ export function assetToUi(r: AssetRow): Asset {
     unit: r.unit ?? null,
     karat: r.karat ?? null,
     costBasis: r.cost_basis ?? null,
+  };
+}
+
+export function clientToUi(r: ClientRow): Client {
+  return {
+    id: r.id,
+    name: dec(r.name) ?? "",
+    email: dec(r.email),
+    phone: dec(r.phone),
+    address: dec(r.address),
+    taxId: dec(r.tax_id),
+    currency: r.currency,
+    notes: dec(r.notes),
+  };
+}
+
+export function paymentAccountToUi(r: PaymentAccountRow): PaymentAccount {
+  return {
+    id: r.id,
+    label: r.label,
+    accountName: dec(r.account_name) ?? "",
+    bankName: r.bank_name,
+    accountNumber: dec(r.account_number),
+    iban: dec(r.iban),
+    swift: r.swift,
+    branchCode: dec(r.branch_code),
+    currency: r.currency,
+    notes: dec(r.notes),
+    isDefault: r.is_default ?? false,
+  };
+}
+
+export function invoiceLineToUi(r: InvoiceLineRow): InvoiceLine {
+  return {
+    id: r.id,
+    description: dec(r.description) ?? "",
+    quantity: r.quantity,
+    unitPrice: r.unit_price,
+    amount: r.amount,
+    taxRate: r.tax_rate ?? null,
+  };
+}
+
+/**
+ * Maps an invoice row to the UI type. `today` (yyyy-mm-dd) is passed in — mappers
+ * stay pure (no clock) — so `overdue` is derived consistently by the caller:
+ * past due date, not fully paid, and not already paid/void.
+ */
+export function invoiceToUi(
+  r: InvoiceRow,
+  today: string,
+  lines?: InvoiceLine[],
+  paymentAccount?: PaymentAccount | null
+): Invoice {
+  const overdue = isOverdue(r.status, r.total, r.amount_paid, r.due_date, today);
+  return {
+    id: r.id,
+    clientId: r.client_id,
+    number: r.number,
+    status: r.status,
+    overdue,
+    issueDate: r.issue_date,
+    dueDate: r.due_date,
+    currency: r.currency,
+    subtotal: r.subtotal,
+    discountTotal: r.discount_total,
+    taxTotal: r.tax_total,
+    total: r.total,
+    amountPaid: r.amount_paid,
+    accountId: r.account_id,
+    paymentAccountId: r.payment_account_id,
+    notes: dec(r.notes),
+    terms: dec(r.terms),
+    publicToken: r.public_token,
+    sentAt: r.sent_at,
+    paidAt: r.paid_at,
+    lines: lines && lines.length ? lines : undefined,
+    paymentAccount: paymentAccount ?? undefined,
   };
 }
 

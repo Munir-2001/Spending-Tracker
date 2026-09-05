@@ -16,8 +16,8 @@ const chartConfig = {
   value: { label: "Net worth", color: "var(--chart-1)" },
 } satisfies ChartConfig;
 
-// Closed months to show alongside the live "now" point.
-const CLOSED_MONTHS_SHOWN = 5;
+// How far back the trend runs.
+const MONTHS_SHOWN = 6;
 
 export function NetWorthChart() {
   const { accounts, items, assets, snapshots, balanceOf, baseCurrency, fx } =
@@ -31,19 +31,21 @@ export function NetWorthChart() {
     );
   }
 
-  // History comes from persisted snapshots (anchored in time — they don't shift
-  // when FX rates are refreshed). The current, still-open month is always the
-  // live figure, computed exactly like a snapshot so the line joins seamlessly.
-  const nowMonth = new Date().toISOString().slice(0, 7); // yyyy-mm
-  const closed = snapshots
-    .filter((s) => s.asOf.slice(0, 7) !== nowMonth)
-    .slice(-CLOSED_MONTHS_SHOWN)
-    .map((s) => ({ month: s.asOf, value: s.value }));
+  // History comes from persisted daily snapshots (anchored in time — each day's
+  // value is frozen when taken and never rewritten when rates change). Today is
+  // shown as a live figure, computed like a snapshot so the line joins smoothly
+  // until tonight's snapshot lands.
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - MONTHS_SHOWN);
+  const cutoffIso = cutoff.toISOString().slice(0, 10);
+
+  const history = snapshots
+    .filter((s) => s.asOf >= cutoffIso && s.asOf < todayIso)
+    .map((s) => ({ date: s.asOf, value: s.value }));
 
   const live = netWorthSnapshot(accounts, balanceOf, assets, items, fx);
-  const data = [...closed, { month: `${nowMonth}-15`, value: live.value }].map(
-    (p) => ({ month: formatMonth(p.month), value: p.value })
-  );
+  const data = [...history, { date: todayIso, value: live.value }];
 
   return (
     <ChartContainer config={chartConfig} className="h-[240px] w-full">
@@ -56,7 +58,9 @@ export function NetWorthChart() {
         </defs>
         <CartesianGrid vertical={false} strokeDasharray="3 3" stroke="var(--border)" />
         <XAxis
-          dataKey="month"
+          dataKey="date"
+          tickFormatter={(d) => formatMonth(d as string)}
+          minTickGap={40}
           tickLine={false}
           axisLine={false}
           tickMargin={10}
@@ -74,6 +78,16 @@ export function NetWorthChart() {
           content={
             <ChartTooltipContent
               indicator="dot"
+              labelFormatter={(_, payload) => {
+                const iso = payload?.[0]?.payload?.date as string | undefined;
+                return iso
+                  ? new Date(iso).toLocaleDateString(undefined, {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })
+                  : "";
+              }}
               formatter={(value) => (
                 <div className="flex w-full items-center justify-between gap-4">
                   <span className="text-muted-foreground">Net worth</span>

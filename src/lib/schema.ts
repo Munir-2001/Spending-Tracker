@@ -368,6 +368,33 @@ export type InvoiceLineRow = {
   created_at: string;
 };
 
+// ── Billing / entitlements ──────────────────────────────────────────────────
+
+export type SubscriptionStatus =
+  | "active"
+  | "trialing"
+  | "past_due"
+  | "canceled"
+  | "incomplete";
+
+/**
+ * A user's Pro subscription — the entitlement source of truth (see 0021).
+ * Written ONLY by the service-role Stripe webhook, never by the user.
+ */
+export type SubscriptionRow = {
+  user_id: string;
+  status: SubscriptionStatus;
+  plan: string; // 'pro'
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  price_id: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  founding: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
 /** Maps a table name to its row type — used by the generic data store. */
 export type TableMap = {
   profiles: ProfileRow;
@@ -387,6 +414,7 @@ export type TableMap = {
   invoices: InvoiceRow;
   invoice_lines: InvoiceLineRow;
   payment_accounts: PaymentAccountRow;
+  subscriptions: SubscriptionRow;
 };
 
 export type TableName = keyof TableMap;

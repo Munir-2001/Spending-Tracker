@@ -36,16 +36,20 @@ export async function GET(request: Request) {
       // Fire a signup event only for brand-new users (their auth row was created
       // moments ago) so the funnel counts conversions, not repeat logins.
       // Analytics must never block auth, so this is best-effort.
+      let isNewSignup = false;
       try {
         const { data } = await supabase.auth.getUser();
         const createdAt = data.user?.created_at;
-        if (createdAt && Date.now() - Date.parse(createdAt) < 60_000) {
-          await track("signup_completed");
-        }
+        isNewSignup = Boolean(
+          createdAt && Date.now() - Date.parse(createdAt) < 60_000
+        );
+        if (isNewSignup) await track("signup_completed");
       } catch {
         /* ignore — analytics is non-critical */
       }
-      return NextResponse.redirect(`${origin}${next}`);
+      // New users go through onboarding → paywall; returning users hit the app
+      // (the app layout bounces them to /paywall if they're not subscribed).
+      return NextResponse.redirect(`${origin}${isNewSignup ? "/welcome" : next}`);
     }
     // A NEW signup is rejected by the DB trigger once we're at the user cap.
     // Distinguish that (so the landing can say "we're full") from a generic

@@ -36,6 +36,8 @@ export function Landing() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [full, setFull] = useState(false);
+  // One switch flips the whole funnel: free launch mode vs the paid $0.99 trial.
+  const paywallOn = process.env.NEXT_PUBLIC_PAYWALL_ENABLED === "1";
 
   // Surface a failed OAuth round-trip (?error) or a signup rejected because we're
   // at the 100-user cap (?full), and pre-emptively show the cap to new visitors.
@@ -135,18 +137,18 @@ export function Landing() {
               className="num text-[11px] uppercase tracking-[0.34em]"
               style={{ color: `${CREAM}88` }}
             >
-              Accounting-grade · beautifully simple
+              Every account · every currency · every asset
             </motion.p>
 
             <motion.h1
               variants={rise}
               className="display mt-6 max-w-3xl text-[clamp(2.8rem,9vw,6.5rem)] leading-[0.92] tracking-tight"
             >
-              Money,
+              Know what
               <br />
-              kept{" "}
+              you&apos;re{" "}
               <span className="relative italic" style={{ color: GOLD }}>
-                honest
+                worth
                 <motion.span
                   aria-hidden
                   className="absolute -bottom-1 left-0 block h-[3px] w-full origin-left rounded-full"
@@ -163,16 +165,16 @@ export function Landing() {
               variants={rise}
               className="display mt-9 max-w-xl text-xl italic leading-snug md:text-2xl"
             >
-              Discipline is what freedom actually looks like.
+              One honest number for everything you own — and owe.
             </motion.p>
             <motion.p
               variants={rise}
               className="mt-3 max-w-xl text-base leading-relaxed"
               style={{ color: `${CREAM}a8` }}
             >
-              Ledger gives your money the rigor of real accounting — encrypted,
-              multi-currency, every figure balanced — so you always know where you
-              stand, and exactly what you&apos;re free to do next.
+              Ledger pulls every account, currency, and asset — cash, gold,
+              crypto, property — into a single net worth that updates the moment
+              your money moves. Encrypted, balanced, and truly yours.
             </motion.p>
 
             <motion.div variants={rise} className="mt-10 flex flex-wrap items-center gap-3">
@@ -182,7 +184,11 @@ export function Landing() {
                 className="group inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-medium transition-transform hover:-translate-y-0.5 disabled:opacity-60"
                 style={{ backgroundColor: GOLD, color: INK }}
               >
-                {loading ? "Connecting…" : "Start free"}
+                {loading
+                  ? "Connecting…"
+                  : paywallOn
+                    ? "Start for $0.99"
+                    : "Get started — free"}
                 <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
               </button>
               <a
@@ -190,9 +196,18 @@ export function Landing() {
                 className="rounded-full border px-6 py-3 text-sm font-medium transition-colors hover:bg-white/5"
                 style={{ borderColor: `${CREAM}26`, color: CREAM }}
               >
-                How it works
+                See how it works
               </a>
             </motion.div>
+            <motion.p
+              variants={rise}
+              className="mt-4 text-xs"
+              style={{ color: `${CREAM}70` }}
+            >
+              {paywallOn
+                ? "$0.99 for your first 7 days, then $12/month. Cancel anytime."
+                : "Free to use — no card required."}
+            </motion.p>
           </motion.div>
         </section>
 
@@ -221,9 +236,9 @@ export function Landing() {
             transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
             className="display mx-auto max-w-2xl text-[clamp(2.2rem,6vw,4rem)] leading-[0.98] tracking-tight"
           >
-            Begin your{" "}
+            See what you&apos;re{" "}
             <span className="italic" style={{ color: GOLD }}>
-              ledger
+              worth
             </span>
             .
           </motion.h2>

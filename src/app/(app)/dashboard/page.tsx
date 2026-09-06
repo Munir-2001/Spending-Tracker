@@ -3,9 +3,9 @@ import { ArrowUpRight, Download, Sparkles } from "lucide-react";
 
 import { Reveal } from "@/components/reveal";
 import { Button } from "@/components/ui/button";
-import { SummaryCards } from "@/components/dashboard/summary-cards";
+import { NetWorthHero } from "@/components/dashboard/networth-hero";
+import { MonthFlows } from "@/components/dashboard/month-flows";
 import { CashflowChart } from "@/components/dashboard/cashflow-chart";
-import { NetWorthChart } from "@/components/dashboard/networth-chart";
 import { NetWorthBreakdown } from "@/components/dashboard/networth-breakdown";
 import { SpendingCategories } from "@/components/dashboard/spending-categories";
 import { RecentTransactions } from "@/components/dashboard/recent-transactions";
@@ -35,7 +35,7 @@ export default async function DashboardPage() {
               {greeting()}, {firstName}
             </p>
             <h1 className="display mt-1.5 text-3xl tracking-tight md:text-4xl">
-              {monthName} overview
+              Here&apos;s where you stand.
             </h1>
           </div>
           <Button
@@ -48,6 +48,12 @@ export default async function DashboardPage() {
           </Button>
         </div>
       </Reveal>
+
+      {/* Net-worth hero — the one honest number: everything you own and owe */}
+      <NetWorthHero />
+
+      {/* This month's cash movement — supporting detail, not the headline */}
+      <MonthFlows />
 
       {/* Money Wrapped teaser */}
       <Reveal delay={0.12}>
@@ -71,22 +77,10 @@ export default async function DashboardPage() {
         </Link>
       </Reveal>
 
-      {/* Stat cards */}
-      <SummaryCards />
-
       {/* Main grid */}
       <div className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-3">
         {/* Left column */}
         <div className="flex flex-col gap-5 lg:col-span-2">
-          <Reveal delay={0.18}>
-            <Panel
-              title="Net worth"
-              description="Trend over the last 6 months"
-            >
-              <NetWorthChart />
-            </Panel>
-          </Reveal>
-
           <Reveal delay={0.19}>
             <Panel
               title="What it's made of"

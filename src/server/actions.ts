@@ -51,6 +51,7 @@ import {
   type InvoiceStatus,
   type InvoiceFieldPrefs,
   type PaymentAccountRow,
+  type SubscriptionRow,
   type NewClientInput,
   type NewInvoiceInput,
   type NewPaymentAccountInput,
@@ -78,6 +79,7 @@ import { DEFAULT_BASE_CURRENCY, DEFAULT_RATES, toMinorUnits } from "@/lib/curren
 import { partialSale } from "@/lib/compute";
 import { invoiceTotals, lineAmount, normalizeInvoicePrefs } from "@/lib/invoice";
 import { keepIfEmpty } from "@/lib/patch";
+import { entitlementFrom, type Entitlement } from "@/lib/entitlement";
 import { goldValueMajor, gramsOf, GRAMS_PER_UNIT } from "@/lib/gold";
 import {
   getUsdGoldQuote,
@@ -139,6 +141,38 @@ export async function getCurrentUser(): Promise<{
       "You",
     email: user.email ?? "",
   };
+}
+
+/**
+ * The signed-in user's Pro entitlement — the single gate for paid features.
+ * Read from the `subscriptions` table (source of truth, written only by the
+ * Stripe webhook; never `profiles.plan`, which is user-writable). Memoized
+ * per-request. In local file mode there's no billing, so the demo user gets
+ * full access.
+ */
+export const getEntitlement = cache(async (): Promise<Entitlement> => {
+  // Free-for-everyone launch mode: until we choose to monetize, the whole app is
+  // unlocked for every user. Flip NEXT_PUBLIC_PAYWALL_ENABLED=1 to enforce real
+  // subscription entitlement (paywall, Stripe gating, and requirePro all wake up).
+  if (process.env.NEXT_PUBLIC_PAYWALL_ENABLED !== "1") {
+    return { pro: true, trialing: false, founding: false };
+  }
+  if (!SUPABASE_CONFIGURED) return { pro: true, trialing: false, founding: true };
+  const userId = await getUserId();
+  const rows = (await db.selectWhere("subscriptions", {
+    user_id: userId,
+  })) as SubscriptionRow[];
+  return entitlementFrom(rows[0] ?? null);
+});
+
+/** Throw a friendly error from a server action if the caller isn't Pro. */
+async function requirePro(): Promise<void> {
+  const { pro } = await getEntitlement();
+  if (!pro) {
+    throw new Error(
+      "Ledger Pro is required to send invoices, export PDFs, and share pay links. Upgrade to continue."
+    );
+  }
 }
 
 export async function signOut() {
@@ -2025,6 +2059,7 @@ export async function deleteInvoice(id: string): Promise<boolean> {
 
 /** Mark a draft as sent: stamp sent_at and mint the public share/PDF token. */
 export async function sendInvoice(id: string): Promise<Invoice | null> {
+  await requirePro(); // Pro gate: building a draft is free; sending needs Pro.
   const now = new Date().toISOString();
   const updated = await updateOwned("invoices", v.idInput.parse(id), {
     status: "sent",

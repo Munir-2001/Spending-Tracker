@@ -18,24 +18,23 @@ import type {
 /**
  * Net-worth snapshot cron.
  *
- * Default (run hourly): takes ONE immutable snapshot per user at their local
- * end-of-day (≈23:00 in their timezone), dated to that local day. Snapshots are
- * NEVER overwritten — a day's value is frozen the moment it's captured, so
- * refreshing rates or re-running the job never rewrites history.
+ * Each run records ONE immutable snapshot per user for their CURRENT local day.
+ * The `(user, as_of)` write is insert-if-absent, so the first run of a given
+ * local day wins and every later run that day is a no-op — one honest point per
+ * user per day, whatever the cron cadence or the user's timezone. Snapshots are
+ * NEVER overwritten, so refreshing rates or re-running never rewrites history.
  *
- * `?force=1`: snapshot every user for their current local day right now,
- * regardless of the hour (manual/backfill of "today"). Still immutable.
+ * (Previously the daily snapshot only fired when the user's local clock read
+ * 23:00 at run time. On a once-a-day cron that silently skipped every user whose
+ * timezone didn't line up with the single run hour — leaving the chart empty.)
+ *
+ * `?force=1`: accepted for backwards-compat; behaviour is now the default.
  * `?seed=1`: one-time backfill of trailing months as APPROXIMATE points so a
  * fresh install isn't an empty chart. Also never overwrites a real snapshot.
  *
  * Auth: `Authorization: Bearer $CRON_SECRET` (Vercel Cron sends it automatically).
- * An hourly trigger is required for true per-timezone timing — Vercel Pro cron,
- * or any external hourly pinger (e.g. cron-job.org) hitting this URL.
  */
 export const dynamic = "force-dynamic";
-
-// Local hour at which the daily snapshot is taken — "night", end of the day.
-const SNAPSHOT_HOUR = 23;
 
 const pad = (n: number) => String(n).padStart(2, "0");
 const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -169,9 +168,10 @@ export async function GET(request: Request) {
       continue;
     }
 
-    // Daily: only the users for whom it's local end-of-day right now (unless forced).
-    const { date: localDate, hour } = localParts(now, userSettings?.timezone ?? "UTC");
-    if (!force && hour !== SNAPSHOT_HOUR) continue;
+    // Record this user's current local day. The immutable (user, as_of) upsert
+    // below makes this idempotent — exactly one snapshot per user per local day,
+    // regardless of timezone or how often the cron runs.
+    const { date: localDate } = localParts(now, userSettings?.timezone ?? "UTC");
     due++;
 
     const snap = netWorthFromRows(userAccounts, userTxns, userLines, userAssets, userRates);

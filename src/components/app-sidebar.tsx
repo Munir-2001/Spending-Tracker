@@ -17,9 +17,9 @@ import {
   Users,
   Landmark,
   Tag,
-  Repeat,
   PiggyBank,
   CalendarClock,
+  // Repeat, // re-add when re-enabling the hidden Subscriptions nav below
   HandHeart,
   Sparkles,
   Settings,
@@ -74,7 +74,9 @@ const navGroups = [
       { title: "Goals", href: "/goals", icon: PiggyBank },
       { title: "Zakat", href: "/zakat", icon: HandHeart },
       { title: "Recurring", href: "/recurring", icon: CalendarClock },
-      { title: "Subscriptions", href: "/subscriptions", icon: Repeat },
+      // Hidden for now — we'll work on Subscriptions later. Re-enable this line
+      // (and the Repeat import above) to bring it back:
+      // { title: "Subscriptions", href: "/subscriptions", icon: Repeat },
     ],
   },
   {

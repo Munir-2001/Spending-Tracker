@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
 import { Search } from "lucide-react";
 
 import { AppSidebar } from "@/components/app-sidebar";
@@ -8,11 +9,13 @@ import { PrivacyToggle } from "@/components/privacy-toggle";
 import { PrivacyGate } from "@/components/privacy-gate";
 import { TransactionsProvider } from "@/components/transactions/transactions-provider";
 import { InvoicesProvider } from "@/components/invoices/invoices-provider";
+import { PlanProvider } from "@/components/plan-provider";
 import { NewTransactionButton } from "@/components/transactions/new-transaction-button";
 import { RouteProgress } from "@/components/ui/route-progress";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 import {
   getCurrentUser,
+  getEntitlement,
   getSettings,
   listAccounts,
   listAssets,
@@ -62,6 +65,11 @@ export default async function AppLayout({
     rates: {},
   };
   let user: Awaited<ReturnType<typeof getCurrentUser>> = null;
+  let entitlement: Awaited<ReturnType<typeof getEntitlement>> = {
+    pro: false,
+    trialing: false,
+    founding: false,
+  };
   let loadFailed = false;
 
   try {
@@ -80,6 +88,7 @@ export default async function AppLayout({
       initialSnapshots,
       initialSettings,
       user,
+      entitlement,
     ] = await Promise.all([
       listTransactions(),
       listAccounts(),
@@ -95,6 +104,7 @@ export default async function AppLayout({
       listNetWorthSnapshots(),
       getSettings(),
       getCurrentUser(),
+      getEntitlement(),
     ]);
   } catch (err) {
     // Re-throw Next's control-flow signals (dynamic-rendering bailout, redirect,
@@ -109,12 +119,18 @@ export default async function AppLayout({
 
   if (loadFailed) return <DataLoadError />;
 
+  // Hard paywall: the app requires an active subscription or trial. Unentitled
+  // users are sent to the paywall (which lives outside this gated layout).
+  // Local file mode returns pro:true, so dev is never gated.
+  if (!entitlement.pro) redirect("/paywall");
+
   return (
     <SidebarProvider>
       {/* Covers the app on every load and asks whether to blur amounts before
           anything is revealed. */}
       <PrivacyGate />
       <RouteProgress />
+      <PlanProvider value={entitlement}>
       <ConfirmProvider>
       <TransactionsProvider
         initialTransactions={initialTransactions}
@@ -155,6 +171,7 @@ export default async function AppLayout({
       </InvoicesProvider>
       </TransactionsProvider>
       </ConfirmProvider>
+      </PlanProvider>
     </SidebarProvider>
   );
 }

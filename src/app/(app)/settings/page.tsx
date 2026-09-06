@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAppData } from "@/components/transactions/transactions-provider";
+import { useEntitlement } from "@/components/plan-provider";
 import { FieldToggles } from "@/components/invoices/field-toggles";
 import { CURRENCIES } from "@/lib/currency";
 import { cn } from "@/lib/utils";
@@ -22,10 +23,27 @@ import { cn } from "@/lib/utils";
 export default function SettingsPage() {
   const { baseCurrency, rates, accounts, invoicePrefs, updateSettings, refreshRates } =
     useAppData();
+  const { pro, trialing } = useEntitlement();
+  const paywallOn = process.env.NEXT_PUBLIC_PAYWALL_ENABLED === "1";
 
   const [base, setBase] = useState(baseCurrency);
   const [prefs, setPrefs] = useState(invoicePrefs);
   const [refreshing, setRefreshing] = useState(false);
+  const [portalLoading, setPortalLoading] = useState(false);
+
+  async function manageBilling() {
+    setPortalLoading(true);
+    try {
+      const res = await fetch("/api/billing/portal", { method: "POST" });
+      if (!res.ok) throw new Error();
+      const { url } = (await res.json()) as { url?: string };
+      if (!url) throw new Error();
+      window.location.href = url;
+    } catch {
+      toast.error("Couldn't open billing. Please try again shortly.");
+      setPortalLoading(false);
+    }
+  }
 
   const usedCodes = new Set(accounts.filter((a) => !a.isGroup).map((a) => a.currency));
 
@@ -54,6 +72,43 @@ export default function SettingsPage() {
           </p>
         </div>
       </Reveal>
+
+      {/* Subscription — only while the paywall is enabled */}
+      {paywallOn && (
+      <Reveal delay={0.04}>
+        <section className="mt-8 rounded-2xl border border-border/60 bg-card p-6">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold tracking-tight">Subscription</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {pro
+                  ? trialing
+                    ? "You're on the Ledger Pro trial."
+                    : "You're on Ledger Pro."
+                  : "Manage your Ledger Pro plan and payment method."}
+              </p>
+            </div>
+            <span
+              className={cn(
+                "shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide",
+                pro ? "bg-income/12 text-income" : "bg-muted text-muted-foreground"
+              )}
+            >
+              {trialing ? "Trial" : pro ? "Pro" : "Free"}
+            </span>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-4"
+            onClick={manageBilling}
+            disabled={portalLoading}
+          >
+            {portalLoading ? "Opening…" : "Manage subscription"}
+          </Button>
+        </section>
+      </Reveal>
+      )}
 
       {/* Display currency */}
       <Reveal delay={0.05}>

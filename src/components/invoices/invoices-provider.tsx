@@ -32,7 +32,6 @@ import type {
   InvoicePaymentInput,
 } from "@/lib/schema";
 import { ClientDialog } from "@/components/invoices/client-dialog";
-import { InvoiceDialog } from "@/components/invoices/invoice-dialog";
 import { PaymentDialog } from "@/components/invoices/payment-dialog";
 import { PaymentAccountDialog } from "@/components/invoices/payment-account-dialog";
 
@@ -72,8 +71,6 @@ type InvoicesContext = {
   // Dialog controls
   openAddClient: () => void;
   openEditClient: (c: Client) => void;
-  openAddInvoice: () => void;
-  openEditInvoice: (i: Invoice) => void;
   openPayment: (i: Invoice) => void;
   openAddPaymentAccount: () => void;
   openEditPaymentAccount: (p: PaymentAccount) => void;
@@ -106,8 +103,6 @@ export function InvoicesProvider({
 
   const [clientOpen, setClientOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
-  const [invoiceOpen, setInvoiceOpen] = useState(false);
-  const [editingInvoice, setEditingInvoice] = useState<Invoice | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [payingInvoice, setPayingInvoice] = useState<Invoice | null>(null);
   const [paOpen, setPaOpen] = useState(false);
@@ -256,14 +251,6 @@ export function InvoicesProvider({
     setEditingClient(c);
     setClientOpen(true);
   }, []);
-  const openAddInvoice = useCallback(() => {
-    setEditingInvoice(null);
-    setInvoiceOpen(true);
-  }, []);
-  const openEditInvoice = useCallback((i: Invoice) => {
-    setEditingInvoice(i);
-    setInvoiceOpen(true);
-  }, []);
   const openPayment = useCallback((i: Invoice) => {
     setPayingInvoice(i);
     setPaymentOpen(true);
@@ -298,8 +285,6 @@ export function InvoicesProvider({
       removePaymentAccount,
       openAddClient,
       openEditClient,
-      openAddInvoice,
-      openEditInvoice,
       openPayment,
       openAddPaymentAccount,
       openEditPaymentAccount,
@@ -324,8 +309,6 @@ export function InvoicesProvider({
       removePaymentAccount,
       openAddClient,
       openEditClient,
-      openAddInvoice,
-      openEditInvoice,
       openPayment,
       openAddPaymentAccount,
       openEditPaymentAccount,
@@ -346,21 +329,6 @@ export function InvoicesProvider({
         onSave={editClient}
         onDelete={removeClient}
         editing={editingClient}
-      />
-
-      <InvoiceDialog
-        open={invoiceOpen}
-        onOpenChange={(o) => {
-          setInvoiceOpen(o);
-          if (!o) setEditingInvoice(null);
-        }}
-        onCreate={createInvoice}
-        onSave={editInvoice}
-        editing={editingInvoice}
-        clients={clients}
-        paymentAccounts={paymentAccounts}
-        onAddClient={openAddClient}
-        onAddPaymentAccount={openAddPaymentAccount}
       />
 
       <PaymentAccountDialog

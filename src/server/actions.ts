@@ -49,6 +49,7 @@ import {
   type InvoiceRow,
   type InvoiceLineRow,
   type InvoiceStatus,
+  type InvoiceFieldPrefs,
   type PaymentAccountRow,
   type NewClientInput,
   type NewInvoiceInput,
@@ -75,7 +76,7 @@ import type {
 } from "@/lib/data";
 import { DEFAULT_BASE_CURRENCY, DEFAULT_RATES, toMinorUnits } from "@/lib/currency";
 import { partialSale } from "@/lib/compute";
-import { invoiceTotals, lineAmount } from "@/lib/invoice";
+import { invoiceTotals, lineAmount, normalizeInvoicePrefs } from "@/lib/invoice";
 import { keepIfEmpty } from "@/lib/patch";
 import { goldValueMajor, gramsOf, GRAMS_PER_UNIT } from "@/lib/gold";
 import {
@@ -1174,6 +1175,8 @@ export type AppSettings = {
   rates: Record<string, number>;
   /** Preferred account, pre-selected when adding a transaction. */
   defaultAccountId?: string | null;
+  /** Saved default for which sections/columns new invoices show. */
+  invoicePrefs?: Partial<InvoiceFieldPrefs>;
 };
 
 /** Default the display currency to whichever currency the user uses most. */
@@ -1288,7 +1291,12 @@ export async function getSettings(): Promise<AppSettings> {
     const saved = await db.readSettings<Partial<AppSettings>>();
     const rates = { ...DEFAULT_RATES, ...(saved?.rates ?? {}), ...live };
     const baseCurrency = saved?.baseCurrency || (await defaultBaseCurrency());
-    return { baseCurrency, rates, defaultAccountId: saved?.defaultAccountId ?? null };
+    return {
+      baseCurrency,
+      rates,
+      defaultAccountId: saved?.defaultAccountId ?? null,
+      invoicePrefs: normalizeInvoicePrefs(saved?.invoicePrefs ?? null),
+    };
   }
   const supabase = await createClient();
   const { data } = await supabase.from("user_settings").select("*").maybeSingle();
@@ -1299,6 +1307,7 @@ export async function getSettings(): Promise<AppSettings> {
     baseCurrency,
     rates,
     defaultAccountId: saved?.default_account_id ?? null,
+    invoicePrefs: normalizeInvoicePrefs(saved?.invoice_prefs ?? null),
   };
 }
 
@@ -1328,6 +1337,9 @@ export async function updateSettings(raw: AppSettings): Promise<AppSettings> {
     base_currency: s.baseCurrency,
     rates: s.rates,
     default_account_id: s.defaultAccountId ?? null,
+    // Only touch invoice_prefs when this call carries it, so a currency save
+    // doesn't wipe the saved invoice default (upsert only sets provided columns).
+    ...(s.invoicePrefs !== undefined ? { invoice_prefs: s.invoicePrefs } : {}),
     updated_at: new Date().toISOString(),
   });
   revalidatePath("/");
@@ -1694,6 +1706,22 @@ async function nextInvoiceNumber(): Promise<string> {
   return `INV-${String(max + 1).padStart(4, "0")}`;
 }
 
+/**
+ * Enforce the invoice's field prefs on its lines: when the Quantity column is
+ * off, treat every line as a flat amount (qty = 1); when the Tax column is off,
+ * strip per-line tax. Keeps totals honest with what the document renders.
+ */
+function applyPrefsToLines(
+  lines: NewInvoiceInput["lines"],
+  prefs: InvoiceFieldPrefs
+): NewInvoiceInput["lines"] {
+  return lines.map((l) => ({
+    ...l,
+    quantity: prefs.quantity ? l.quantity : 1,
+    taxRate: prefs.tax ? (l.taxRate ?? null) : null,
+  }));
+}
+
 /** Build persist-ready invoice_line rows (descriptions encrypted). */
 function buildInvoiceLines(
   invoiceId: string,
@@ -1897,8 +1925,10 @@ export async function createInvoice(raw: NewInvoiceInput): Promise<Invoice> {
   const userId = await getUserId();
   const now = new Date().toISOString();
   const id = randomUUID();
-  const discount = input.discountTotal ?? 0;
-  const { subtotal, taxTotal, total } = invoiceTotals(input.lines, discount);
+  const prefs = normalizeInvoicePrefs(input.fieldPrefs);
+  const lines = applyPrefsToLines(input.lines, prefs);
+  const discount = prefs.discount ? (input.discountTotal ?? 0) : 0;
+  const { subtotal, taxTotal, total } = invoiceTotals(lines, discount);
   const row: InvoiceRow = {
     id,
     user_id: userId,
@@ -1919,13 +1949,14 @@ export async function createInvoice(raw: NewInvoiceInput): Promise<Invoice> {
     notes: enc(input.notes ?? null),
     terms: enc(input.terms ?? null),
     public_token: null,
+    field_prefs: prefs,
     sent_at: null,
     paid_at: null,
     created_at: now,
     updated_at: now,
   };
   await db.insert("invoices", row);
-  for (const l of buildInvoiceLines(id, input.lines, now)) {
+  for (const l of buildInvoiceLines(id, lines, now)) {
     await db.insert("invoice_lines", l);
   }
   revalidateInvoiceViews();
@@ -1944,8 +1975,10 @@ export async function updateInvoice(
     throw new Error("Only draft invoices can be edited");
   }
   const now = new Date().toISOString();
-  const discount = input.discountTotal ?? 0;
-  const { subtotal, taxTotal, total } = invoiceTotals(input.lines, discount);
+  const prefs = normalizeInvoicePrefs(input.fieldPrefs);
+  const lines = applyPrefsToLines(input.lines, prefs);
+  const discount = prefs.discount ? (input.discountTotal ?? 0) : 0;
+  const { subtotal, taxTotal, total } = invoiceTotals(lines, discount);
   const updated = await updateOwned("invoices", id, {
     client_id: input.clientId,
     issue_date: input.issueDate,
@@ -1957,6 +1990,7 @@ export async function updateInvoice(
     total,
     account_id: input.accountId ?? null,
     payment_account_id: input.paymentAccountId ?? null,
+    field_prefs: prefs,
     updated_at: now,
     ...keepIfEmpty({
       notes: enc(input.notes ?? null),
@@ -1968,7 +2002,7 @@ export async function updateInvoice(
     invoice_id: id,
   })) as InvoiceLineRow[];
   for (const l of oldLines) await db.remove("invoice_lines", l.id);
-  for (const l of buildInvoiceLines(id, input.lines, now)) {
+  for (const l of buildInvoiceLines(id, lines, now)) {
     await db.insert("invoice_lines", l);
   }
   revalidateInvoiceViews();

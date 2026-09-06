@@ -35,6 +35,14 @@ const invoice: Invoice = {
   publicToken: "tok",
   sentAt: "2026-09-01T00:00:00Z",
   paidAt: null,
+  fieldPrefs: {
+    quantity: true,
+    tax: true,
+    discount: true,
+    paymentDetails: true,
+    notes: true,
+    terms: true,
+  },
   paymentAccount: {
     id: "pa1",
     label: "Meezan USD",
@@ -56,7 +64,7 @@ const invoice: Invoice = {
 
 describe("renderInvoicePdf", () => {
   it("produces a valid, non-trivial PDF document", async () => {
-    const buf = await renderInvoicePdf(invoice, client, "My Studio");
+    const buf = await renderInvoicePdf(invoice, client);
     // PDF files start with the "%PDF" magic bytes.
     expect(buf.subarray(0, 4).toString("latin1")).toBe("%PDF");
     // A real one-page invoice is comfortably larger than a few hundred bytes.

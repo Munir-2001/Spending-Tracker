@@ -32,7 +32,9 @@ import type {
   NewTransactionInput,
   RepaymentInput,
   TransferInput,
+  InvoiceFieldPrefs,
 } from "@/lib/schema";
+import { normalizeInvoicePrefs } from "@/lib/invoice";
 import { makeFx, type Fx } from "@/lib/currency";
 import { accountBalances } from "@/lib/compute";
 import {
@@ -211,6 +213,8 @@ type Ctx = {
   fx: Fx;
   rates: Record<string, number>;
   updateSettings: (settings: AppSettings) => void;
+  /** Saved default for which sections a new invoice shows. */
+  invoicePrefs: InvoiceFieldPrefs;
   /** Pull fresh live exchange rates. */
   refreshRates: () => Promise<void>;
   /** Preferred wallet, pre-selected for new transactions (null = none). */
@@ -273,6 +277,9 @@ export function TransactionsProvider({
   // Net-worth history is loaded once server-side and is read-only in-session.
   const [snapshots] = useState<NetWorthSnapshot[]>(initialSnapshots);
   const [baseCurrency, setBaseCurrency] = useState(initialSettings.baseCurrency);
+  const [invoicePrefs, setInvoicePrefs] = useState<InvoiceFieldPrefs>(
+    normalizeInvoicePrefs(initialSettings.invoicePrefs)
+  );
   const [rates, setRates] = useState(initialSettings.rates);
   const [defaultAccountId, setDefaultAccountId] = useState<string | null>(
     initialSettings.defaultAccountId ?? null
@@ -293,6 +300,8 @@ export function TransactionsProvider({
   const updateSettings = useCallback(
     (s: AppSettings) => {
       setBaseCurrency(s.baseCurrency);
+      if (s.invoicePrefs !== undefined)
+        setInvoicePrefs(normalizeInvoicePrefs(s.invoicePrefs));
       setRates(s.rates);
       // Preserve the current default account unless this call changes it.
       const nextDefault =
@@ -907,6 +916,7 @@ export function TransactionsProvider({
       balanceOf: (id) => ownBalance.get(id) ?? 0,
       snapshots,
       baseCurrency,
+      invoicePrefs,
       fx,
       rates,
       updateSettings,
@@ -982,6 +992,7 @@ export function TransactionsProvider({
       ownBalance,
       snapshots,
       baseCurrency,
+      invoicePrefs,
       fx,
       rates,
       updateSettings,

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { dec } from "@/server/crypto";
-import { isOverdue } from "@/lib/invoice";
+import { isOverdue, normalizeInvoicePrefs } from "@/lib/invoice";
 import type {
   Account,
   Asset,
@@ -195,6 +195,7 @@ export function invoiceToUi(
     publicToken: r.public_token,
     sentAt: r.sent_at,
     paidAt: r.paid_at,
+    fieldPrefs: normalizeInvoicePrefs(r.field_prefs),
     lines: lines && lines.length ? lines : undefined,
     paymentAccount: paymentAccount ?? undefined,
   };

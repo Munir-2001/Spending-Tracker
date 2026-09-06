@@ -15,19 +15,22 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useAppData } from "@/components/transactions/transactions-provider";
+import { FieldToggles } from "@/components/invoices/field-toggles";
 import { CURRENCIES } from "@/lib/currency";
 import { cn } from "@/lib/utils";
 
 export default function SettingsPage() {
-  const { baseCurrency, rates, accounts, updateSettings, refreshRates } = useAppData();
+  const { baseCurrency, rates, accounts, invoicePrefs, updateSettings, refreshRates } =
+    useAppData();
 
   const [base, setBase] = useState(baseCurrency);
+  const [prefs, setPrefs] = useState(invoicePrefs);
   const [refreshing, setRefreshing] = useState(false);
 
   const usedCodes = new Set(accounts.filter((a) => !a.isGroup).map((a) => a.currency));
 
   function save() {
-    updateSettings({ baseCurrency: base, rates });
+    updateSettings({ baseCurrency: base, rates, invoicePrefs: prefs });
     toast.success("Settings saved", { description: `Display currency: ${base}` });
   }
 
@@ -129,7 +132,21 @@ export default function SettingsPage() {
         </section>
       </Reveal>
 
+      {/* Invoice fields — saved default */}
       <Reveal delay={0.15}>
+        <section className="mt-3 rounded-2xl border border-border/60 bg-card p-6">
+          <h2 className="text-sm font-semibold tracking-tight">Invoice fields</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            The default sections new invoices include. You can still change these
+            per invoice when creating one.
+          </p>
+          <div className="mt-4">
+            <FieldToggles value={prefs} onChange={setPrefs} />
+          </div>
+        </section>
+      </Reveal>
+
+      <Reveal delay={0.2}>
         <div className="mt-4 flex justify-end">
           <Button onClick={save}>Save settings</Button>
         </div>

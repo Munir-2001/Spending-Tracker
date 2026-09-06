@@ -165,6 +165,7 @@ export type UserSettingsRow = {
   rates: Record<string, number>;
   default_account_id: string | null;
   timezone: string | null; // IANA tz for local-night net-worth snapshots
+  invoice_prefs: Record<string, boolean> | null; // saved default (see InvoiceFieldPrefs)
   updated_at: string;
 };
 
@@ -281,6 +282,16 @@ export type ClientRow = {
   updated_at: string;
 };
 
+/** Which optional sections/columns appear on an invoice document. */
+export type InvoiceFieldPrefs = {
+  quantity: boolean; // Qty column (off → flat amounts, qty forced to 1)
+  tax: boolean; // per-line Tax column (off → no tax charged)
+  discount: boolean; // invoice discount (off → no discount)
+  paymentDetails: boolean; // the receiving-bank block
+  notes: boolean;
+  terms: boolean;
+};
+
 export type InvoiceStatus =
   | "draft"
   | "sent"
@@ -315,6 +326,7 @@ export type InvoiceRow = {
   notes: string | null; // encrypted, customer-facing
   terms: string | null; // encrypted, payment terms / footer
   public_token: string | null; // unguessable share/PDF link token
+  field_prefs: Record<string, boolean> | null; // which sections show (see InvoiceFieldPrefs)
   sent_at: string | null;
   paid_at: string | null;
   created_at: string;
@@ -539,6 +551,7 @@ export type NewInvoiceInput = {
   paymentAccountId?: string | null; // receiving bank shown on the invoice
   notes?: string | null;
   terms?: string | null;
+  fieldPrefs?: InvoiceFieldPrefs; // which sections/columns to show
   lines: NewInvoiceLine[];
 };
 

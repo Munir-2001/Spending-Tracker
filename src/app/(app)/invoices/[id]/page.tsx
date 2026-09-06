@@ -18,7 +18,7 @@ import type { Invoice } from "@/lib/data";
 export default function InvoiceDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params.id;
-  const { invoices, getClient, openEditInvoice, openPayment, send, unsend, voidOne } =
+  const { invoices, getClient, openPayment, send, unsend, voidOne } =
     useInvoices();
   const confirm = useConfirm();
 
@@ -41,9 +41,15 @@ export default function InvoiceDetailPage() {
 
   // Prefer the provider record for reactive status/amountPaid; take lines from
   // the fetched full record.
+  // Prefer the provider record for reactive status/amountPaid; take the
+  // fully-resolved bits (lines + bank details) from the fetched full record.
   const base = listInvoice ?? fetched;
   const invoice: Invoice | null = base
-    ? { ...base, lines: fetched?.lines ?? base.lines }
+    ? {
+        ...base,
+        lines: fetched?.lines ?? base.lines,
+        paymentAccount: fetched?.paymentAccount ?? base.paymentAccount,
+      }
     : null;
 
   if (!invoice) {
@@ -109,14 +115,11 @@ export default function InvoiceDetailPage() {
           <div className="flex flex-wrap items-center gap-2">
             {isDraft && (
               <>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => openEditInvoice(invoice)}
-                >
-                  <Pencil className="size-4" />
-                  Edit
+                <Button asChild variant="outline" size="sm" className="gap-1.5">
+                  <Link href={`/invoices/${invoice.id}/edit`}>
+                    <Pencil className="size-4" />
+                    Edit
+                  </Link>
                 </Button>
                 <Button
                   size="sm"
@@ -160,14 +163,16 @@ export default function InvoiceDetailPage() {
                 Copy link
               </Button>
             )}
-            {!isDraft && (
-              <Button asChild variant="outline" size="sm" className="gap-1.5">
-                <a href={`/api/invoices/${invoice.id}/pdf`} target="_blank" rel="noreferrer">
-                  <Download className="size-4" />
-                  PDF
-                </a>
-              </Button>
-            )}
+            <Button asChild variant="outline" size="sm" className="gap-1.5">
+              <a
+                href={`/api/invoices/${invoice.id}/pdf`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <Download className="size-4" />
+                Export PDF
+              </a>
+            </Button>
             {canVoid && (
               <Button
                 variant="ghost"

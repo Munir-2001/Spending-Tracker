@@ -5,22 +5,22 @@ import {
   Page,
   View,
   Text,
+  Svg,
+  Rect,
   StyleSheet,
   renderToBuffer,
 } from "@react-pdf/renderer";
 
 import type { Client, Invoice } from "@/lib/data";
-import { amountDue, lineTax } from "@/lib/invoice";
+import { amountDue } from "@/lib/invoice";
 import { formatMoney, formatFullDate } from "@/lib/format";
 
 /**
- * Server-rendered PDF of an invoice. Mirrors the on-brand HTML
- * <InvoiceDocument> layout; the shared `@/lib/invoice` math + `formatMoney`
- * guarantee the figures match exactly. Brand fonts (Fraunces / Geist Mono) come
- * from next/font and aren't available as TTFs here, so we use react-pdf's
- * built-in Helvetica for text and Courier for money figures — mirroring the
- * app's sans/mono split. To upgrade: register the TTFs via Font.register and
- * swap the `sans`/`mono` families below.
+ * Print-ready PDF — mirrors the on-brand <InvoiceDocument>: centered Ledger
+ * letterhead, ruled table, aligned bank-details grid. ONE type family
+ * (Helvetica; its figures are fixed-width so amount columns align) — no second
+ * mono font, so every block is typographically consistent. Shared
+ * `@/lib/invoice` math + `formatMoney` keep figures identical to the app.
  */
 
 const INK = "#1c1a17";
@@ -30,112 +30,101 @@ const INCOME = "#0f7a5a";
 
 const S = StyleSheet.create({
   page: {
-    paddingVertical: 48,
-    paddingHorizontal: 48,
+    paddingTop: 64,
+    paddingBottom: 56,
+    paddingHorizontal: 56,
     fontFamily: "Helvetica",
-    fontSize: 10,
+    fontSize: 11,
     color: INK,
     lineHeight: 1.5,
   },
-  headerRow: {
+  // Letterhead — serif wordmark (Times) echoes the app's Fraunces letterhead.
+  head: { alignItems: "center", marginBottom: 30 },
+  markBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 9,
+    backgroundColor: INK,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: 14,
+  },
+  wordmark: {
+    fontSize: 25,
+    fontFamily: "Times-Roman",
+    letterSpacing: 6,
+    marginLeft: 6,
+    lineHeight: 1,
+    marginBottom: 9,
+  },
+  eyebrow: { fontSize: 9, letterSpacing: 1.5, color: MUTED, textTransform: "uppercase", fontFamily: "Helvetica-Bold" },
+  rule: { borderBottomWidth: 1, borderBottomColor: BORDER },
+
+  metaRow: { flexDirection: "row", justifyContent: "space-between", marginTop: 26 },
+  bill: { fontSize: 16, fontFamily: "Helvetica-Bold", marginTop: 5 },
+  small: { fontSize: 10, color: MUTED, marginTop: 1 },
+  right: { textAlign: "right" },
+  number: { fontSize: 16, fontFamily: "Helvetica-Bold", marginTop: 5, textAlign: "right" },
+  metaLine: { flexDirection: "row", justifyContent: "flex-end", gap: 16, marginTop: 3 },
+
+  // Table
+  tHead: { flexDirection: "row", borderBottomWidth: 1.5, borderBottomColor: INK, paddingBottom: 7, marginTop: 30 },
+  tRow: { flexDirection: "row", borderBottomWidth: 1, borderBottomColor: BORDER, paddingVertical: 10 },
+  cDesc: { flex: 1, paddingRight: 8 },
+  cUnit: { width: 90, textAlign: "right" },
+  cQty: { width: 46, textAlign: "right" },
+  cTax: { width: 48, textAlign: "right", color: MUTED },
+  cAmt: { width: 94, textAlign: "right", fontFamily: "Helvetica-Bold" },
+  th: { fontSize: 9, letterSpacing: 1, color: MUTED, textTransform: "uppercase" },
+
+  // Totals
+  totalsWrap: { marginTop: 18, flexDirection: "row", justifyContent: "flex-end" },
+  totals: { width: 230 },
+  totalLine: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 2.5 },
+  grand: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-  },
-  eyebrow: {
-    fontSize: 8,
-    letterSpacing: 1,
-    color: MUTED,
-    textTransform: "uppercase",
-    fontFamily: "Helvetica-Bold",
-  },
-  number: { fontSize: 22, marginTop: 2, fontFamily: "Helvetica-Bold" },
-  totalBig: {
-    fontSize: 18,
-    fontFamily: "Courier-Bold",
-    textAlign: "right",
-    marginTop: 4,
-  },
-  status: {
-    fontSize: 8,
-    letterSpacing: 1,
-    textTransform: "uppercase",
-    fontFamily: "Helvetica-Bold",
-    textAlign: "right",
-  },
-  metaRow: { flexDirection: "row", gap: 24, marginTop: 28 },
-  metaCol: { flex: 1 },
-  metaValue: { marginTop: 2 },
-  small: { fontSize: 8, color: MUTED },
-  tHead: {
-    flexDirection: "row",
-    borderBottomWidth: 1,
-    borderBottomColor: INK,
-    paddingBottom: 4,
-    marginTop: 28,
-  },
-  tRow: {
-    flexDirection: "row",
-    borderBottomWidth: 1,
-    borderBottomColor: BORDER,
-    paddingVertical: 6,
-  },
-  cDesc: { flex: 1 },
-  cNum: { width: 70, textAlign: "right", fontFamily: "Courier" },
-  cAmt: { width: 80, textAlign: "right", fontFamily: "Courier-Bold" },
-  th: { fontSize: 8, letterSpacing: 1, color: MUTED, textTransform: "uppercase" },
-  totalsWrap: { marginTop: 16, flexDirection: "row", justifyContent: "flex-end" },
-  totals: { width: 200 },
-  totalLine: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    paddingVertical: 2,
-  },
-  totalGrand: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    borderTopWidth: 1,
-    borderTopColor: BORDER,
-    paddingTop: 6,
-    marginTop: 4,
-  },
-  money: { fontFamily: "Courier" },
-  moneyBold: { fontFamily: "Courier-Bold" },
-  footer: {
-    marginTop: 32,
-    borderTopWidth: 1,
-    borderTopColor: BORDER,
-    paddingTop: 16,
-    color: MUTED,
-  },
-  payBox: {
-    marginTop: 24,
-    borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 6,
-    padding: 12,
-  },
-  payGrid: {
+    alignItems: "flex-end",
+    borderTopWidth: 1.5,
+    borderTopColor: INK,
+    paddingTop: 9,
     marginTop: 6,
-    flexDirection: "row",
-    flexWrap: "wrap",
   },
-  payField: { width: "33%", marginBottom: 6, paddingRight: 8 },
+  grandLabel: { fontSize: 14, fontFamily: "Helvetica-Bold" },
+  grandValue: { fontSize: 19, fontFamily: "Helvetica-Bold" },
+
+  // Note + footer
+  noteBox: { marginTop: 26, borderLeftWidth: 2, borderLeftColor: BORDER, paddingLeft: 12, maxWidth: 380 },
+  footer: {
+    marginTop: 44,
+    borderTopWidth: 1,
+    borderTopColor: BORDER,
+    paddingTop: 18,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-end",
+  },
+  bankRow: { flexDirection: "row", marginTop: 3.5 },
+  bankLabel: { width: 104, color: MUTED },
+  bankValue: { width: 268, color: INK },
+  thanks: { fontSize: 24, fontFamily: "Times-Italic", color: MUTED },
 });
 
-function PdfField({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
+function Mark() {
   return (
-    <View style={S.payField}>
-      <Text style={S.small}>{label}</Text>
-      <Text style={mono ? { fontFamily: "Courier" } : undefined}>{value}</Text>
+    <Svg width={16} height={16} viewBox="0 0 16 16">
+      <Rect x={2} y={3.5} width={12} height={2.2} rx={1.1} fill="#ffffff" />
+      <Rect x={2} y={7.4} width={8} height={2.2} rx={1.1} fill="#ffffff" opacity={0.7} />
+      <Rect x={2} y={11.3} width={10.5} height={2.2} rx={1.1} fill="#ffffff" opacity={0.45} />
+    </Svg>
+  );
+}
+
+function Bank({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={S.bankRow} wrap={false}>
+      <Text style={S.bankLabel}>{label}</Text>
+      <Text style={S.bankValue}>{value}</Text>
     </View>
   );
 }
@@ -143,88 +132,78 @@ function PdfField({
 function InvoicePdfDoc({
   invoice,
   client,
-  from,
 }: {
   invoice: Invoice;
   client?: Client;
-  from?: string;
 }) {
   const { currency } = invoice;
   const lines = invoice.lines ?? [];
+  const prefs = invoice.fieldPrefs;
+  const pa = invoice.paymentAccount;
   const due = amountDue(invoice.total, invoice.amountPaid);
-  const money = (m: number) => formatMoney(m, { currency });
+  // react-pdf's built-in Helvetica has broken metrics for some currency glyphs
+  // (e.g. €) that overlap the digits — render the ISO code (letters only)
+  // instead so amounts always render cleanly. PDF-only; app HTML keeps the symbol.
+  const money = (m: number) =>
+    formatMoney(m, { currency }).replace(/^[^\d\s.,-]+/, currency + " ");
 
   return (
     <Document title={`Invoice ${invoice.number}`}>
       <Page size="A4" style={S.page}>
-        {/* Header */}
-        <View style={S.headerRow}>
-          <View>
-            <Text style={S.eyebrow}>Invoice</Text>
-            <Text style={S.number}>{invoice.number}</Text>
+        {/* Letterhead */}
+        <View style={S.head}>
+          <View style={S.markBox}>
+            <Mark />
           </View>
-          <View>
-            <Text
-              style={[
-                S.status,
-                { color: invoice.overdue ? "#b91c1c" : MUTED },
-              ]}
-            >
-              {invoice.overdue ? "Overdue" : invoice.status}
-            </Text>
-            <Text style={S.totalBig}>{money(invoice.total)}</Text>
-            {invoice.amountPaid > 0 && due > 0 && (
-              <Text style={[S.small, { textAlign: "right" }]}>
-                {money(due)} due
-              </Text>
-            )}
-          </View>
+          <Text style={S.wordmark}>LEDGER</Text>
+          <Text style={S.eyebrow}>Invoice</Text>
         </View>
 
-        {/* Parties + dates */}
+        <View style={S.rule} />
+
+        {/* Parties + meta */}
         <View style={S.metaRow}>
-          {from ? (
-            <View style={S.metaCol}>
-              <Text style={S.eyebrow}>From</Text>
-              <Text style={S.metaValue}>{from}</Text>
-            </View>
-          ) : null}
-          <View style={S.metaCol}>
-            <Text style={S.eyebrow}>Bill to</Text>
-            <Text style={S.metaValue}>{client?.name ?? "—"}</Text>
+          <View style={{ maxWidth: "58%" }}>
+            <Text style={S.eyebrow}>Issued to</Text>
+            <Text style={S.bill}>{client?.name ?? "—"}</Text>
             {client?.email ? <Text style={S.small}>{client.email}</Text> : null}
-            {client?.address ? (
-              <Text style={S.small}>{client.address}</Text>
-            ) : null}
-            {client?.taxId ? (
-              <Text style={S.small}>Tax ID {client.taxId}</Text>
-            ) : null}
+            {client?.address ? <Text style={S.small}>{client.address}</Text> : null}
+            {client?.taxId ? <Text style={S.small}>Tax ID {client.taxId}</Text> : null}
           </View>
-          <View style={S.metaCol}>
-            <Text style={S.eyebrow}>Issued</Text>
-            <Text style={S.metaValue}>{formatFullDate(invoice.issueDate)}</Text>
-          </View>
-          <View style={S.metaCol}>
-            <Text style={S.eyebrow}>Due</Text>
-            <Text style={S.metaValue}>{formatFullDate(invoice.dueDate)}</Text>
+          <View>
+            <Text style={[S.eyebrow, S.right]}>
+              Invoice no.{invoice.overdue ? "  ·  OVERDUE" : ""}
+            </Text>
+            <Text style={S.number}>{invoice.number}</Text>
+            <View style={S.metaLine}>
+              <Text style={S.small}>Issued</Text>
+              <Text>{formatFullDate(invoice.issueDate)}</Text>
+            </View>
+            <View style={S.metaLine}>
+              <Text style={S.small}>Due</Text>
+              <Text>{formatFullDate(invoice.dueDate)}</Text>
+            </View>
           </View>
         </View>
 
         {/* Line items */}
         <View style={S.tHead}>
           <Text style={[S.cDesc, S.th]}>Description</Text>
-          <Text style={[S.cNum, S.th]}>Qty</Text>
-          <Text style={[S.cNum, S.th]}>Price</Text>
-          <Text style={[S.cNum, S.th]}>Tax</Text>
-          <Text style={[S.cAmt, S.th]}>Amount</Text>
+          <Text style={[S.cUnit, S.th]}>Unit price</Text>
+          {prefs.quantity ? <Text style={[S.cQty, S.th]}>Qty</Text> : null}
+          {prefs.tax ? <Text style={[S.cTax, S.th]}>Tax</Text> : null}
+          <Text style={[S.cAmt, S.th, { fontFamily: "Helvetica" }]}>Amount</Text>
         </View>
         {lines.map((l) => (
           <View style={S.tRow} key={l.id} wrap={false}>
             <Text style={S.cDesc}>{l.description}</Text>
-            <Text style={S.cNum}>{l.quantity}</Text>
-            <Text style={S.cNum}>{money(l.unitPrice)}</Text>
-            <Text style={S.cNum}>{l.taxRate ? `${l.taxRate}%` : "—"}</Text>
-            <Text style={S.cAmt}>{money(l.amount + lineTax(l))}</Text>
+            <Text style={S.cUnit}>{money(l.unitPrice)}</Text>
+            {prefs.quantity ? <Text style={S.cQty}>{l.quantity}</Text> : null}
+            {prefs.tax ? (
+              <Text style={S.cTax}>{l.taxRate ? `${l.taxRate}%` : "—"}</Text>
+            ) : null}
+            {/* pre-tax line total */}
+            <Text style={S.cAmt}>{money(l.amount)}</Text>
           </View>
         ))}
 
@@ -233,101 +212,72 @@ function InvoicePdfDoc({
           <View style={S.totals}>
             <View style={S.totalLine}>
               <Text style={{ color: MUTED }}>Subtotal</Text>
-              <Text style={S.money}>{money(invoice.subtotal)}</Text>
+              <Text>{money(invoice.subtotal)}</Text>
             </View>
             {invoice.discountTotal > 0 && (
               <View style={S.totalLine}>
                 <Text style={{ color: MUTED }}>Discount</Text>
-                <Text style={S.money}>−{money(invoice.discountTotal)}</Text>
+                <Text>−{money(invoice.discountTotal)}</Text>
               </View>
             )}
-            <View style={S.totalLine}>
-              <Text style={{ color: MUTED }}>Tax</Text>
-              <Text style={S.money}>{money(invoice.taxTotal)}</Text>
-            </View>
-            <View style={S.totalGrand}>
-              <Text style={{ fontFamily: "Helvetica-Bold" }}>Total</Text>
-              <Text style={S.moneyBold}>{money(invoice.total)}</Text>
-            </View>
+            {prefs.tax ? (
+              <View style={S.totalLine}>
+                <Text style={{ color: MUTED }}>Tax</Text>
+                <Text>{money(invoice.taxTotal)}</Text>
+              </View>
+            ) : null}
             {invoice.amountPaid > 0 && (
-              <>
-                <View style={S.totalLine}>
-                  <Text style={{ color: INCOME }}>Paid</Text>
-                  <Text style={[S.money, { color: INCOME }]}>
-                    {money(invoice.amountPaid)}
-                  </Text>
-                </View>
-                <View style={S.totalLine}>
-                  <Text style={{ fontFamily: "Helvetica-Bold" }}>Due</Text>
-                  <Text style={S.moneyBold}>{money(due)}</Text>
-                </View>
-              </>
+              <View style={S.totalLine}>
+                <Text style={{ color: INCOME }}>Paid</Text>
+                <Text style={{ color: INCOME }}>{money(invoice.amountPaid)}</Text>
+              </View>
             )}
+            <View style={S.grand}>
+              <Text style={S.grandLabel}>
+                {invoice.amountPaid > 0 ? "Amount due" : "Total"}
+              </Text>
+              <Text style={S.grandValue}>
+                {money(invoice.amountPaid > 0 ? due : invoice.total)}
+              </Text>
+            </View>
           </View>
         </View>
 
-        {/* Payment details */}
-        {invoice.paymentAccount && (
-          <View style={S.payBox}>
-            <Text style={S.eyebrow}>Payment details</Text>
-            <View style={S.payGrid}>
-              {invoice.paymentAccount.bankName ? (
-                <PdfField label="Bank" value={invoice.paymentAccount.bankName} />
-              ) : null}
-              <PdfField
-                label="Account name"
-                value={invoice.paymentAccount.accountName}
-              />
-              {invoice.paymentAccount.accountNumber ? (
-                <PdfField
-                  label="Account no."
-                  value={invoice.paymentAccount.accountNumber}
-                  mono
-                />
-              ) : null}
-              {invoice.paymentAccount.iban ? (
-                <PdfField label="IBAN" value={invoice.paymentAccount.iban} mono />
-              ) : null}
-              {invoice.paymentAccount.swift ? (
-                <PdfField
-                  label="SWIFT / BIC"
-                  value={invoice.paymentAccount.swift}
-                  mono
-                />
-              ) : null}
-              {invoice.paymentAccount.branchCode ? (
-                <PdfField
-                  label="Branch code"
-                  value={invoice.paymentAccount.branchCode}
-                  mono
-                />
-              ) : null}
-            </View>
-            {invoice.paymentAccount.notes ? (
-              <Text style={[S.small, { marginTop: 6 }]}>
-                {invoice.paymentAccount.notes}
-              </Text>
-            ) : null}
+        {/* Note */}
+        {prefs.notes && invoice.notes ? (
+          <View style={S.noteBox}>
+            <Text style={S.eyebrow}>Note</Text>
+            <Text style={{ color: MUTED, marginTop: 2 }}>{invoice.notes}</Text>
           </View>
-        )}
+        ) : null}
 
-        {/* Notes + terms */}
-        {(invoice.notes || invoice.terms) && (
-          <View style={S.footer}>
-            {invoice.notes ? (
-              <View style={{ marginBottom: 8 }}>
-                <Text style={S.eyebrow}>Notes</Text>
-                <Text>{invoice.notes}</Text>
+        {/* Footer: bank details + thank you */}
+        <View style={S.footer}>
+          <View style={{ width: 380 }}>
+            {prefs.paymentDetails && pa ? (
+              <View>
+                <Text style={S.eyebrow}>Bank details</Text>
+                <View style={{ marginTop: 4 }}>
+                  {pa.bankName ? <Bank label="Bank" value={pa.bankName} /> : null}
+                  <Bank label="Account title" value={pa.accountName} />
+                  {pa.accountNumber ? (
+                    <Bank label="Account no." value={pa.accountNumber} />
+                  ) : null}
+                  {pa.iban ? <Bank label="IBAN" value={pa.iban} /> : null}
+                  {pa.swift ? <Bank label="SWIFT / BIC" value={pa.swift} /> : null}
+                  {pa.branchCode ? <Bank label="Branch" value={pa.branchCode} /> : null}
+                </View>
               </View>
             ) : null}
-            {invoice.terms ? (
-              <View>
+            {prefs.terms && invoice.terms ? (
+              <View style={{ marginTop: prefs.paymentDetails && pa ? 12 : 0 }}>
                 <Text style={S.eyebrow}>Terms</Text>
-                <Text>{invoice.terms}</Text>
+                <Text style={{ color: MUTED, marginTop: 2 }}>{invoice.terms}</Text>
               </View>
             ) : null}
           </View>
-        )}
+          <Text style={S.thanks}>Thank you</Text>
+        </View>
       </Page>
     </Document>
   );
@@ -336,10 +286,7 @@ function InvoicePdfDoc({
 /** Render an invoice to a PDF byte buffer. */
 export async function renderInvoicePdf(
   invoice: Invoice,
-  client?: Client,
-  from?: string
+  client?: Client
 ): Promise<Buffer> {
-  return renderToBuffer(
-    <InvoicePdfDoc invoice={invoice} client={client} from={from} />
-  );
+  return renderToBuffer(<InvoicePdfDoc invoice={invoice} client={client} />);
 }

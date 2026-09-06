@@ -1,4 +1,4 @@
-import { getInvoice, listClients, getCurrentUser } from "@/server/actions";
+import { getInvoice, listClients } from "@/server/actions";
 import { renderInvoicePdf } from "@/server/invoice-pdf";
 
 /**
@@ -21,11 +21,10 @@ export async function GET(
   const invoice = await getInvoice(id);
   if (!invoice) return new Response("Invoice not found", { status: 404 });
 
-  const [clients, user] = await Promise.all([listClients(), getCurrentUser()]);
+  const clients = await listClients();
   const client = clients.find((c) => c.id === invoice.clientId);
-  const from = user?.name && user.name !== "You" ? user.name : undefined;
 
-  const pdf = await renderInvoicePdf(invoice, client, from);
+  const pdf = await renderInvoicePdf(invoice, client);
 
   return new Response(new Uint8Array(pdf), {
     headers: {

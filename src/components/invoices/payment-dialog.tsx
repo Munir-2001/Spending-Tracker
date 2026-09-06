@@ -105,7 +105,8 @@ export function PaymentDialog({
               <SelectContent>
                 {selectableAccounts.map((a) => (
                   <SelectItem key={a.id} value={a.id}>
-                    {a.name} · {a.currency}
+                    {a.name}
+                    {a.institution ? ` · ${a.institution}` : ""} · {a.currency}
                   </SelectItem>
                 ))}
               </SelectContent>

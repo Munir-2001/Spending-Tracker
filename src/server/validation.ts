@@ -178,6 +178,19 @@ export const importRows = z
   )
   .max(5000);
 
+// Which optional sections/columns show on an invoice (all fields optional; the
+// server normalizes missing ones to the default). Shared by settings + invoices.
+const invoiceFieldPrefs = z
+  .object({
+    quantity: z.boolean(),
+    tax: z.boolean(),
+    discount: z.boolean(),
+    paymentDetails: z.boolean(),
+    notes: z.boolean(),
+    terms: z.boolean(),
+  })
+  .partial();
+
 export const settingsInput = z.object({
   baseCurrency: currency,
   rates: z
@@ -187,6 +200,7 @@ export const settingsInput = z.object({
     )
     .refine((r) => Object.keys(r).length <= 100, "too many rate entries"),
   defaultAccountId: idStr.nullable().optional(),
+  invoicePrefs: invoiceFieldPrefs.optional(),
 });
 
 export const goalInput = z.object({
@@ -254,17 +268,19 @@ export const invoiceInput = z.object({
   paymentAccountId: idStr.nullable().optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
   terms: z.string().trim().max(2000).nullable().optional(),
+  fieldPrefs: invoiceFieldPrefs.optional(),
   lines: z.array(invoiceLineInput).min(1).max(200),
 });
 
 export const paymentAccountInput = z.object({
-  label: reqStr(80),
+  label: reqStr(120), // may be prefilled from an account title (also 120)
   accountName: reqStr(120),
   bankName: z.string().trim().max(120).nullable(),
   accountNumber: z.string().trim().max(64).nullable(),
   iban: z.string().trim().max(64).nullable(),
   swift: z.string().trim().max(20).nullable(),
-  branchCode: z.string().trim().max(40).nullable(),
+  // Branch can be a full name/address (matches accounts.branch), not a short code.
+  branchCode: z.string().trim().max(120).nullable(),
   currency,
   notes: z.string().trim().max(1000).nullable(),
   isDefault: z.boolean(),

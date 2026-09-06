@@ -263,7 +263,7 @@ export function PaymentAccountDialog({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="pa-branch">Branch code</Label>
+              <Label htmlFor="pa-branch">Branch</Label>
               <Input
                 id="pa-branch"
                 value={branchCode}

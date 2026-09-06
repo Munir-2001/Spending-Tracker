@@ -10,6 +10,7 @@ import type {
   BudgetPeriod,
   CategoryKind,
   InvoiceStatus,
+  InvoiceFieldPrefs,
   MetalUnit,
   RecurringCadence,
 } from "@/lib/schema";
@@ -218,6 +219,8 @@ export type Invoice = {
   publicToken: string | null;
   sentAt: string | null;
   paidAt: string | null;
+  /** Which optional sections/columns this invoice shows (always resolved). */
+  fieldPrefs: InvoiceFieldPrefs;
   lines?: InvoiceLine[];
   /** Resolved receiving-bank details, attached when a single invoice is loaded. */
   paymentAccount?: PaymentAccount | null;

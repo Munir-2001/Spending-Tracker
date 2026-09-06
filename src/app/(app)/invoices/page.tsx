@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Plus, FileText } from "lucide-react";
 
 import { Reveal } from "@/components/reveal";
@@ -29,7 +30,7 @@ const FILTERS: { value: Filter; label: string }[] = [
 ];
 
 export default function InvoicesPage() {
-  const { invoices, getClient, openAddInvoice } = useInvoices();
+  const { invoices, getClient } = useInvoices();
   const { fx, baseCurrency } = useAppData();
   const [filter, setFilter] = useState<Filter>("all");
 
@@ -83,9 +84,11 @@ export default function InvoicesPage() {
               Bill clients, track what&apos;s owed, and count payments as income.
             </p>
           </div>
-          <Button onClick={openAddInvoice} className="shrink-0 gap-1.5">
-            <Plus className="size-4" />
-            New
+          <Button asChild className="shrink-0 gap-1.5">
+            <Link href="/invoices/new">
+              <Plus className="size-4" />
+              New
+            </Link>
           </Button>
         </div>
       </Reveal>
@@ -98,13 +101,11 @@ export default function InvoicesPage() {
             title="No invoices yet"
             description="Create your first invoice. When it's paid, it counts as income automatically."
             action={
-              <Button
-                onClick={openAddInvoice}
-                variant="outline"
-                className="gap-1.5"
-              >
-                <Plus className="size-4" />
-                New invoice
+              <Button asChild variant="outline" className="gap-1.5">
+                <Link href="/invoices/new">
+                  <Plus className="size-4" />
+                  New invoice
+                </Link>
               </Button>
             }
           />
@@ -174,7 +175,8 @@ function InvoiceRow({
   invoice: Invoice;
   clientName: string;
 }) {
-  const { openEditInvoice, removeInvoice } = useInvoices();
+  const { removeInvoice } = useInvoices();
+  const router = useRouter();
   const confirm = useConfirm();
   const isDraft = invoice.status === "draft";
 
@@ -213,7 +215,7 @@ function InvoiceRow({
 
       {isDraft ? (
         <RowMenu
-          onEdit={() => openEditInvoice(invoice)}
+          onEdit={() => router.push(`/invoices/${invoice.id}/edit`)}
           onDelete={onDelete}
           label={`Actions for ${invoice.number}`}
         />

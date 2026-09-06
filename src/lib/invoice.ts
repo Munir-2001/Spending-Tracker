@@ -8,7 +8,34 @@
  * each line may carry its own percentage rate.
  */
 
-import type { InvoiceStatus } from "@/lib/schema";
+import type { InvoiceStatus, InvoiceFieldPrefs } from "@/lib/schema";
+
+/** All sections on by default — the baseline a new user starts from. */
+export const DEFAULT_INVOICE_PREFS: InvoiceFieldPrefs = {
+  quantity: true,
+  tax: true,
+  discount: true,
+  paymentDetails: true,
+  notes: true,
+  terms: true,
+};
+
+/** Coerce a stored/loose prefs map into a full, typed prefs object (missing → default). */
+export function normalizeInvoicePrefs(
+  raw: Record<string, unknown> | null | undefined
+): InvoiceFieldPrefs {
+  const r = raw ?? {};
+  const pick = (k: keyof InvoiceFieldPrefs) =>
+    typeof r[k] === "boolean" ? (r[k] as boolean) : DEFAULT_INVOICE_PREFS[k];
+  return {
+    quantity: pick("quantity"),
+    tax: pick("tax"),
+    discount: pick("discount"),
+    paymentDetails: pick("paymentDetails"),
+    notes: pick("notes"),
+    terms: pick("terms"),
+  };
+}
 
 /** The shape needed to compute a line's money — a subset of a line item. */
 export type LineMath = {

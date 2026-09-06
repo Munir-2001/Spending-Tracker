@@ -7,6 +7,8 @@ import {
   isOverdue,
   lineAmount,
   lineTax,
+  normalizeInvoicePrefs,
+  DEFAULT_INVOICE_PREFS,
 } from "@/lib/invoice";
 
 describe("invoice line math", () => {
@@ -73,6 +75,31 @@ describe("deriveStatus", () => {
   });
   it("leaves a future-dated sent invoice as sent", () => {
     expect(deriveStatus("sent", 10000, 0, "2026-10-01", today)).toBe("sent");
+  });
+});
+
+describe("normalizeInvoicePrefs", () => {
+  it("defaults everything on when nothing is stored", () => {
+    expect(normalizeInvoicePrefs(null)).toEqual(DEFAULT_INVOICE_PREFS);
+    expect(normalizeInvoicePrefs(undefined)).toEqual(DEFAULT_INVOICE_PREFS);
+    expect(normalizeInvoicePrefs({})).toEqual(DEFAULT_INVOICE_PREFS);
+  });
+
+  it("honors stored booleans and fills missing keys with the default", () => {
+    expect(normalizeInvoicePrefs({ tax: false, discount: false })).toEqual({
+      quantity: true,
+      tax: false,
+      discount: false,
+      paymentDetails: true,
+      notes: true,
+      terms: true,
+    });
+  });
+
+  it("ignores non-boolean junk", () => {
+    expect(normalizeInvoicePrefs({ tax: "no" as unknown as boolean })).toEqual(
+      DEFAULT_INVOICE_PREFS
+    );
   });
 });
 

@@ -1,241 +1,271 @@
 import type { Client, Invoice } from "@/lib/data";
-import { amountDue, lineTax } from "@/lib/invoice";
+import { amountDue } from "@/lib/invoice";
 import { formatMoney, formatFullDate } from "@/lib/format";
 import { StatusBadge } from "@/components/invoices/status-badge";
 import { cn } from "@/lib/utils";
 
-function Field({
+/**
+ * The on-brand invoice document — warm editorial letterhead used in the detail
+ * view, builder preview, public link, and mirrored by the PDF.
+ *
+ * Type rule (consistent per block): the serif (Fraunces `.display`) appears in
+ * ONE place — the LEDGER wordmark. EVERY other block is the sans; figures and
+ * codes use `tabular-nums` so columns align without switching to a second
+ * (mono) family. Base text 15px.
+ */
+
+const LABEL =
+  "text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground";
+const nums = "tabular-nums";
+
+/** The Ledger mark — three stacked balanced bars (matches the app sidebar). */
+function LedgerMark({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true" className={className}>
+      <rect x="2" y="3.5" width="12" height="2.2" rx="1.1" fill="currentColor" />
+      <rect x="2" y="7.4" width="8" height="2.2" rx="1.1" fill="currentColor" opacity="0.7" />
+      <rect x="2" y="11.3" width="10.5" height="2.2" rx="1.1" fill="currentColor" opacity="0.45" />
+    </svg>
+  );
+}
+
+function TotalRow({
   label,
   value,
-  mono,
 }: {
   label: string;
   value: string;
-  mono?: boolean;
 }) {
   return (
-    <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className={cn("font-medium", mono && "num break-all")}>{value}</dd>
+    <div className="flex justify-between gap-4">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className={cn("text-right", nums)}>{value}</dd>
     </div>
   );
 }
 
-/**
- * The on-brand invoice document — the single visual source of truth for how an
- * invoice reads. Shown in the app detail view and (later) the public link; the
- * @react-pdf renderer mirrors this layout for the downloadable file. Numbers use
- * `.num`; the header figure uses `.display`. Presentational only.
- */
+/** One aligned label/value row in the bank-details grid. */
+function BankRow({
+  label,
+  value,
+  code,
+}: {
+  label: string;
+  value: string;
+  code?: boolean;
+}) {
+  return (
+    <>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className={cn("font-medium", code && "tabular-nums break-all")}>
+        {value}
+      </dd>
+    </>
+  );
+}
+
 export function InvoiceDocument({
   invoice,
   client,
-  from,
 }: {
   invoice: Invoice;
   client?: Client;
-  /** The issuing business name (from profile/settings). */
-  from?: string;
 }) {
   const { currency } = invoice;
   const lines = invoice.lines ?? [];
+  const prefs = invoice.fieldPrefs;
   const due = amountDue(invoice.total, invoice.amountPaid);
+  const pa = invoice.paymentAccount;
 
   return (
-    <div className="rounded-2xl border border-border/60 bg-card p-6 md:p-10">
-      {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="eyebrow">Invoice</p>
-          <p className="display mt-1 text-3xl tracking-tight">{invoice.number}</p>
-        </div>
-        <div className="text-right">
-          <StatusBadge status={invoice.status} overdue={invoice.overdue} />
-          <p className="num mt-2 text-2xl font-semibold tabular-nums">
-            {formatMoney(invoice.total, { currency })}
+    <div className="overflow-hidden rounded-2xl border border-border/60 bg-card text-[15px] leading-relaxed text-foreground">
+      <div className="px-8 py-10 md:px-14 md:py-12">
+        {/* ── Letterhead (the only serif moment) ─────────────────────────── */}
+        <div className="flex flex-col items-center text-center">
+          <span className="flex size-11 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+            <LedgerMark className="size-5" />
+          </span>
+          <p className="display mt-3 text-xl uppercase tracking-[0.26em]">
+            Ledger
           </p>
-          {invoice.amountPaid > 0 && due > 0 && (
-            <p className="num mt-0.5 text-xs text-muted-foreground tabular-nums">
-              {formatMoney(due, { currency })} due
-            </p>
-          )}
+          <p className="mt-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+            Invoice
+          </p>
         </div>
-      </div>
 
-      {/* Parties + dates */}
-      <div className="mt-8 grid grid-cols-2 gap-6 text-sm md:grid-cols-4">
-        {from && (
-          <div>
-            <p className="eyebrow">From</p>
-            <p className="mt-1 font-medium">{from}</p>
+        <div className="mt-8 h-px bg-border" />
+
+        {/* ── Parties + meta ─────────────────────────────────────────────── */}
+        <div className="mt-8 flex flex-wrap justify-between gap-6">
+          <div className="max-w-[60%]">
+            <p className={LABEL}>Issued to</p>
+            <p className="mt-2 text-lg font-semibold leading-tight">
+              {client?.name ?? "—"}
+            </p>
+            {client?.email && (
+              <p className="mt-1 text-sm text-muted-foreground">{client.email}</p>
+            )}
+            {client?.address && (
+              <p className="whitespace-pre-line text-sm text-muted-foreground">
+                {client.address}
+              </p>
+            )}
+            {client?.taxId && (
+              <p className="mt-1 text-sm text-muted-foreground">
+                Tax ID {client.taxId}
+              </p>
+            )}
           </div>
-        )}
-        <div>
-          <p className="eyebrow">Bill to</p>
-          <p className="mt-1 font-medium">{client?.name ?? "—"}</p>
-          {client?.email && (
-            <p className="text-xs text-muted-foreground">{client.email}</p>
-          )}
-          {client?.address && (
-            <p className="whitespace-pre-line text-xs text-muted-foreground">
-              {client.address}
-            </p>
-          )}
-          {client?.taxId && (
-            <p className="text-xs text-muted-foreground">Tax ID {client.taxId}</p>
-          )}
-        </div>
-        <div>
-          <p className="eyebrow">Issued</p>
-          <p className="mt-1">{formatFullDate(invoice.issueDate)}</p>
-        </div>
-        <div>
-          <p className="eyebrow">Due</p>
-          <p className="mt-1">{formatFullDate(invoice.dueDate)}</p>
-        </div>
-      </div>
 
-      {/* Line items */}
-      <div className="mt-8 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border/60 text-left">
-              <th className="eyebrow py-2 font-medium">Description</th>
-              <th className="eyebrow py-2 text-right font-medium">Qty</th>
-              <th className="eyebrow py-2 text-right font-medium">Price</th>
-              <th className="eyebrow py-2 text-right font-medium">Tax</th>
-              <th className="eyebrow py-2 text-right font-medium">Amount</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((l) => (
-              <tr key={l.id} className="border-b border-border/40">
-                <td className="py-2.5 pr-4">{l.description}</td>
-                <td className="num py-2.5 text-right tabular-nums">
-                  {l.quantity}
-                </td>
-                <td className="num py-2.5 text-right tabular-nums">
-                  {formatMoney(l.unitPrice, { currency })}
-                </td>
-                <td className="num py-2.5 text-right tabular-nums text-muted-foreground">
-                  {l.taxRate ? `${l.taxRate}%` : "—"}
-                </td>
-                <td className="num py-2.5 text-right font-medium tabular-nums">
-                  {formatMoney(l.amount + lineTax(l), { currency })}
-                </td>
+          <div className="text-right">
+            <div className="flex items-center justify-end gap-2">
+              <p className={LABEL}>Invoice no.</p>
+              <StatusBadge status={invoice.status} overdue={invoice.overdue} />
+            </div>
+            <p className={cn("mt-2 text-lg font-semibold", nums)}>
+              {invoice.number}
+            </p>
+            <dl className="mt-3 space-y-1 text-sm">
+              <div className="flex justify-between gap-8">
+                <dt className="text-muted-foreground">Issued</dt>
+                <dd className="font-medium">{formatFullDate(invoice.issueDate)}</dd>
+              </div>
+              <div className="flex justify-between gap-8">
+                <dt className="text-muted-foreground">Due</dt>
+                <dd
+                  className={cn(
+                    "font-medium",
+                    invoice.overdue && "text-expense"
+                  )}
+                >
+                  {formatFullDate(invoice.dueDate)}
+                </dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+
+        {/* ── Line items ─────────────────────────────────────────────────── */}
+        <div className="mt-10 overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className={cn("border-b-2 border-foreground/80 text-left align-bottom", LABEL)}>
+                <th className="pb-3">Description</th>
+                <th className="pb-3 text-right">Unit price</th>
+                {prefs.quantity && <th className="pb-3 text-right">Qty</th>}
+                {prefs.tax && <th className="pb-3 text-right">Tax</th>}
+                <th className="pb-3 text-right">Amount</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {lines.map((l) => (
+                <tr key={l.id} className="border-b border-border/50 align-top">
+                  <td className="py-3.5 pr-4 font-medium">{l.description}</td>
+                  <td className={cn("py-3.5 text-right", nums)}>
+                    {formatMoney(l.unitPrice, { currency })}
+                  </td>
+                  {prefs.quantity && (
+                    <td className={cn("py-3.5 text-right", nums)}>{l.quantity}</td>
+                  )}
+                  {prefs.tax && (
+                    <td className={cn("py-3.5 text-right text-muted-foreground", nums)}>
+                      {l.taxRate ? `${l.taxRate}%` : "—"}
+                    </td>
+                  )}
+                  {/* pre-tax line total — reconciles with Subtotal */}
+                  <td className={cn("py-3.5 text-right font-semibold", nums)}>
+                    {formatMoney(l.amount, { currency })}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-      {/* Totals */}
-      <div className="mt-6 flex justify-end">
-        <dl className="w-full max-w-xs space-y-1.5 text-sm">
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Subtotal</dt>
-            <dd className="num tabular-nums">
-              {formatMoney(invoice.subtotal, { currency })}
-            </dd>
-          </div>
-          {invoice.discountTotal > 0 && (
-            <div className="flex justify-between">
-              <dt className="text-muted-foreground">Discount</dt>
-              <dd className="num tabular-nums">
-                −{formatMoney(invoice.discountTotal, { currency })}
+        {/* ── Totals ─────────────────────────────────────────────────────── */}
+        <div className="mt-6 flex justify-end">
+          <dl className="w-full max-w-[17rem] space-y-2 text-sm">
+            <TotalRow
+              label="Subtotal"
+              value={formatMoney(invoice.subtotal, { currency })}
+            />
+            {invoice.discountTotal > 0 && (
+              <TotalRow
+                label="Discount"
+                value={`−${formatMoney(invoice.discountTotal, { currency })}`}
+              />
+            )}
+            {prefs.tax && (
+              <TotalRow
+                label="Tax"
+                value={formatMoney(invoice.taxTotal, { currency })}
+              />
+            )}
+            {invoice.amountPaid > 0 && (
+              <TotalRow
+                label="Paid"
+                value={formatMoney(invoice.amountPaid, { currency })}
+              />
+            )}
+            <div className="mt-1 flex items-center justify-between gap-4 border-t-2 border-foreground/80 pt-3">
+              <dt className="text-base font-semibold">
+                {invoice.amountPaid > 0 ? "Amount due" : "Total"}
+              </dt>
+              <dd className={cn("text-xl font-bold", nums)}>
+                {formatMoney(invoice.amountPaid > 0 ? due : invoice.total, {
+                  currency,
+                })}
               </dd>
             </div>
-          )}
-          <div className="flex justify-between">
-            <dt className="text-muted-foreground">Tax</dt>
-            <dd className="num tabular-nums">
-              {formatMoney(invoice.taxTotal, { currency })}
-            </dd>
-          </div>
-          <div className="flex justify-between border-t border-border/60 pt-2 text-base font-semibold">
-            <dt>Total</dt>
-            <dd className="num tabular-nums">
-              {formatMoney(invoice.total, { currency })}
-            </dd>
-          </div>
-          {invoice.amountPaid > 0 && (
-            <>
-              <div className="flex justify-between text-income">
-                <dt>Paid</dt>
-                <dd className="num tabular-nums">
-                  {formatMoney(invoice.amountPaid, { currency })}
-                </dd>
-              </div>
-              <div className="flex justify-between font-semibold">
-                <dt>Due</dt>
-                <dd className="num tabular-nums">
-                  {formatMoney(due, { currency })}
-                </dd>
-              </div>
-            </>
-          )}
-        </dl>
-      </div>
-
-      {/* Payment details */}
-      {invoice.paymentAccount && (
-        <div className="mt-8 rounded-xl border border-border/60 bg-surface p-4">
-          <p className="eyebrow">Payment details</p>
-          <dl className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1.5 text-sm sm:grid-cols-3">
-            {invoice.paymentAccount.bankName && (
-              <Field label="Bank" value={invoice.paymentAccount.bankName} />
-            )}
-            <Field label="Account name" value={invoice.paymentAccount.accountName} />
-            {invoice.paymentAccount.accountNumber && (
-              <Field
-                label="Account no."
-                value={invoice.paymentAccount.accountNumber}
-                mono
-              />
-            )}
-            {invoice.paymentAccount.iban && (
-              <Field label="IBAN" value={invoice.paymentAccount.iban} mono />
-            )}
-            {invoice.paymentAccount.swift && (
-              <Field
-                label="SWIFT / BIC"
-                value={invoice.paymentAccount.swift}
-                mono
-              />
-            )}
-            {invoice.paymentAccount.branchCode && (
-              <Field
-                label="Branch code"
-                value={invoice.paymentAccount.branchCode}
-                mono
-              />
-            )}
           </dl>
-          {invoice.paymentAccount.notes && (
-            <p className="mt-3 whitespace-pre-line text-xs text-muted-foreground">
-              {invoice.paymentAccount.notes}
-            </p>
-          )}
         </div>
-      )}
 
-      {/* Notes + terms */}
-      {(invoice.notes || invoice.terms) && (
-        <div className="mt-8 space-y-3 border-t border-border/60 pt-6 text-sm text-muted-foreground">
-          {invoice.notes && (
-            <div>
-              <p className="eyebrow">Notes</p>
-              <p className="mt-1 whitespace-pre-line">{invoice.notes}</p>
-            </div>
-          )}
-          {invoice.terms && (
-            <div>
-              <p className="eyebrow">Terms</p>
-              <p className="mt-1 whitespace-pre-line">{invoice.terms}</p>
-            </div>
-          )}
+        {/* ── Note — under the table, quiet ──────────────────────────────── */}
+        {prefs.notes && invoice.notes && (
+          <div className="mt-8 max-w-lg border-l-2 border-border pl-4">
+            <p className={LABEL}>Note</p>
+            <p className="mt-1 whitespace-pre-line text-sm text-muted-foreground">
+              {invoice.notes}
+            </p>
+          </div>
+        )}
+
+        {/* ── Footer: bank details (aligned grid) + terms + thank you ────── */}
+        <div className="mt-12 flex flex-wrap items-end justify-between gap-x-10 gap-y-8 border-t border-border/60 pt-8">
+          <div className="min-w-0 flex-1 space-y-6">
+            {prefs.paymentDetails && pa && (
+              <div>
+                <p className={LABEL}>Bank details</p>
+                <dl className="mt-3 grid max-w-md grid-cols-[7.5rem_minmax(0,1fr)] gap-x-6 gap-y-2 text-sm">
+                  {pa.bankName && <BankRow label="Bank" value={pa.bankName} />}
+                  <BankRow label="Account title" value={pa.accountName} />
+                  {pa.accountNumber && (
+                    <BankRow label="Account no." value={pa.accountNumber} code />
+                  )}
+                  {pa.iban && <BankRow label="IBAN" value={pa.iban} code />}
+                  {pa.swift && <BankRow label="SWIFT / BIC" value={pa.swift} code />}
+                  {pa.branchCode && (
+                    <BankRow label="Branch" value={pa.branchCode} />
+                  )}
+                </dl>
+              </div>
+            )}
+
+            {prefs.terms && invoice.terms && (
+              <div>
+                <p className={LABEL}>Terms</p>
+                <p className="mt-1 max-w-md whitespace-pre-line text-sm text-muted-foreground">
+                  {invoice.terms}
+                </p>
+              </div>
+            )}
+          </div>
+
+          <p className="ml-auto text-2xl font-medium italic text-muted-foreground/70">
+            Thank you
+          </p>
         </div>
-      )}
+      </div>
     </div>
   );
 }

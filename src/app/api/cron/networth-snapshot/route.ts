@@ -10,6 +10,7 @@ import type {
   AccountRow,
   AssetRow,
   NetWorthSnapshotRow,
+  OrganizationRow,
   TransactionLineRow,
   TransactionRow,
   UserSettingsRow,
@@ -100,9 +101,11 @@ export async function GET(request: Request) {
   const months = Math.min(24, Math.max(1, Number(url.searchParams.get("months")) || 6));
   const now = new Date();
 
-  const [profiles, accounts, txns, lines, assets, settings, liveRates] =
+  // One snapshot per WORKSPACE. We still run as a single daily cron and loop over
+  // every workspace in memory — no per-workspace cron (Vercel Hobby allows one).
+  const [orgs, accounts, txns, lines, assets, settings, liveRates] =
     await Promise.all([
-      supabase.from("profiles").select("id"),
+      supabase.from("organizations").select("id, user_id, base_currency, rates"),
       supabase.from("accounts").select("*"),
       supabase.from("transactions").select("*"),
       supabase.from("transaction_lines").select("*"),
@@ -112,7 +115,7 @@ export async function GET(request: Request) {
     ]);
 
   const firstError =
-    profiles.error ||
+    orgs.error ||
     accounts.error ||
     txns.error ||
     lines.error ||
@@ -122,45 +125,54 @@ export async function GET(request: Request) {
     return Response.json({ error: firstError.message }, { status: 500 });
   }
 
-  const accountsByUser = groupBy((accounts.data ?? []) as AccountRow[], (r) => r.user_id);
+  const accountsByOrg = groupBy((accounts.data ?? []) as AccountRow[], (r) => r.org_id);
   const txnRows = (txns.data ?? []) as TransactionRow[];
-  const txnsByUser = groupBy(txnRows, (r) => r.user_id);
-  const txnUser = new Map(txnRows.map((t) => [t.id, t.user_id]));
-  const linesByUser = groupBy(
+  const txnsByOrg = groupBy(txnRows, (r) => r.org_id);
+  const txnOrg = new Map(txnRows.map((t) => [t.id, t.org_id]));
+  const linesByOrg = groupBy(
     (lines.data ?? []) as TransactionLineRow[],
-    (l) => txnUser.get(l.transaction_id) ?? null
+    (l) => txnOrg.get(l.transaction_id) ?? null
   );
-  const assetsByUser = groupBy((assets.data ?? []) as AssetRow[], (r) => r.user_id);
+  const assetsByOrg = groupBy((assets.data ?? []) as AssetRow[], (r) => r.org_id);
   const settingsByUser = new Map(
     ((settings.data ?? []) as UserSettingsRow[]).map((s) => [s.user_id, s])
   );
 
-  const userIds = ((profiles.data ?? []) as { id: string }[]).map((p) => p.id);
+  type OrgLite = Pick<OrganizationRow, "id" | "user_id" | "base_currency" | "rates">;
+  const workspaces = (orgs.data ?? []) as OrgLite[];
   const rows: Omit<NetWorthSnapshotRow, "id" | "created_at">[] = [];
-  let due = 0; // users whose local night hit this run (daily mode)
+  let due = 0; // workspaces snapshotted this run
 
-  for (const userId of userIds) {
-    const userAccounts = accountsByUser.get(userId) ?? [];
-    const userTxns = txnsByUser.get(userId) ?? [];
-    const userLines = linesByUser.get(userId) ?? [];
-    const userAssets = assetsByUser.get(userId) ?? [];
-    if (userAccounts.length === 0 && userAssets.length === 0) continue;
+  for (const org of workspaces) {
+    const userId = org.user_id;
+    if (!userId) continue;
+    const wsAccounts = accountsByOrg.get(org.id) ?? [];
+    const wsTxns = txnsByOrg.get(org.id) ?? [];
+    const wsLines = linesByOrg.get(org.id) ?? [];
+    const wsAssets = assetsByOrg.get(org.id) ?? [];
+    if (wsAccounts.length === 0 && wsAssets.length === 0) continue;
 
+    // Rates + base currency come from the WORKSPACE; timezone stays per-user.
     const userSettings = settingsByUser.get(userId) ?? null;
-    const userRates = resolveUserRates(userSettings, liveRates, DEFAULT_BASE_CURRENCY);
+    const wsRates = resolveUserRates(
+      { base_currency: org.base_currency, rates: org.rates },
+      liveRates,
+      DEFAULT_BASE_CURRENCY
+    );
 
     if (seed) {
       const series = netWorthSeedFromRows(
-        userAccounts, userTxns, userLines, userAssets, userRates, now, months
+        wsAccounts, wsTxns, wsLines, wsAssets, wsRates, now, months
       );
       for (const p of series) {
         const [y, m] = p.month.split("-").map(Number);
         if (y === now.getFullYear() && m - 1 === now.getMonth()) continue; // skip open month
         rows.push({
           user_id: userId,
+          org_id: org.id,
           as_of: monthEnd(y, m - 1),
           value_minor: Math.round(p.value),
-          base_currency: userRates.baseCurrency,
+          base_currency: wsRates.baseCurrency,
           breakdown: {},
           approximate: true,
         });
@@ -168,18 +180,18 @@ export async function GET(request: Request) {
       continue;
     }
 
-    // Record this user's current local day. The immutable (user, as_of) upsert
-    // below makes this idempotent — exactly one snapshot per user per local day,
-    // regardless of timezone or how often the cron runs.
+    // Record this workspace's current local day. The immutable (org_id, as_of)
+    // upsert makes this idempotent — one snapshot per workspace per local day.
     const { date: localDate } = localParts(now, userSettings?.timezone ?? "UTC");
     due++;
 
-    const snap = netWorthFromRows(userAccounts, userTxns, userLines, userAssets, userRates);
+    const snap = netWorthFromRows(wsAccounts, wsTxns, wsLines, wsAssets, wsRates);
     rows.push({
       user_id: userId,
+      org_id: org.id,
       as_of: localDate,
       value_minor: Math.round(snap.value),
-      base_currency: userRates.baseCurrency,
+      base_currency: wsRates.baseCurrency,
       breakdown: {
         accounts: Math.round(snap.breakdown.accounts),
         assets: Math.round(snap.breakdown.assets),
@@ -190,13 +202,13 @@ export async function GET(request: Request) {
   }
 
   if (rows.length === 0) {
-    return Response.json({ ok: true, seed, force, users: userIds.length, due, written: 0 });
+    return Response.json({ ok: true, seed, force, workspaces: workspaces.length, due, written: 0 });
   }
 
-  // ALWAYS insert-if-absent: an existing (user, as_of) snapshot is immutable.
+  // ALWAYS insert-if-absent: an existing (org_id, as_of) snapshot is immutable.
   const { error: writeError } = await supabase
     .from("net_worth_snapshots")
-    .upsert(rows, { onConflict: "user_id,as_of", ignoreDuplicates: true });
+    .upsert(rows, { onConflict: "org_id,as_of", ignoreDuplicates: true });
   if (writeError) {
     return Response.json({ error: writeError.message }, { status: 500 });
   }
@@ -205,7 +217,7 @@ export async function GET(request: Request) {
     ok: true,
     seed,
     force,
-    users: userIds.length,
+    workspaces: workspaces.length,
     due,
     written: rows.length,
   });

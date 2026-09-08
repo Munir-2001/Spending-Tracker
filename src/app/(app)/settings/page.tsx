@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { useAppData } from "@/components/transactions/transactions-provider";
 import { useEntitlement } from "@/components/plan-provider";
+import { WorkspaceManager } from "@/components/workspaces/workspace-manager";
 import { FieldToggles } from "@/components/invoices/field-toggles";
 import { CURRENCIES } from "@/lib/currency";
 import { cn } from "@/lib/utils";
@@ -67,10 +68,16 @@ export default function SettingsPage() {
         <div className="flex flex-col gap-1.5">
           <h1 className="display text-3xl tracking-tight md:text-4xl">Settings</h1>
           <p className="text-sm text-muted-foreground">
-            Choose the currency your totals are shown in. Exchange rates update
-            themselves.
+            Manage your workspaces and the currency your totals are shown in.
+            Currency, rates, and invoice preferences apply to the current
+            workspace.
           </p>
         </div>
+      </Reveal>
+
+      {/* Workspaces */}
+      <Reveal delay={0.03}>
+        <WorkspaceManager />
       </Reveal>
 
       {/* Subscription — only while the paywall is enabled */}

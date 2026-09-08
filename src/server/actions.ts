@@ -6,6 +6,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import * as db from "@/server/db";
+import {
+  getUserId,
+  getActiveWorkspaceId,
+  DEMO_WORKSPACE_ID,
+} from "@/server/workspace";
 import { enc, dec, hashToken } from "@/server/crypto";
 import {
   accountToUi,
@@ -23,7 +28,6 @@ import * as v from "@/server/validation";
 import { createClient } from "@/lib/supabase/server";
 import { SUPABASE_CONFIGURED } from "@/lib/supabase/config";
 import {
-  DEMO_USER_ID,
   type AccountRow,
   type AssetRow,
   type AssetLotRow,
@@ -44,7 +48,7 @@ import {
   type TransferInput,
   type TransactionLineRow,
   type TransactionRow,
-  type UserSettingsRow,
+  type OrganizationRow,
   type ClientRow,
   type InvoiceRow,
   type InvoiceLineRow,
@@ -74,6 +78,7 @@ import type {
   RecurringRule,
   Transaction,
   TransactionItem,
+  Workspace,
 } from "@/lib/data";
 import { DEFAULT_BASE_CURRENCY, DEFAULT_RATES, toMinorUnits } from "@/lib/currency";
 import { partialSale } from "@/lib/compute";
@@ -93,16 +98,6 @@ import {
  * Memoized per-request so the ownership-scoped wrappers below can call it freely
  * without repeated session lookups.
  */
-const getUserId = cache(async (): Promise<string> => {
-  if (!SUPABASE_CONFIGURED) return DEMO_USER_ID;
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) throw new Error("Not authenticated");
-  return user.id;
-});
-
 /**
  * Update/delete a row scoped to the current user. This re-verifies ownership in
  * the data layer — the query itself carries `user_id = auth user` — so a server
@@ -1332,9 +1327,15 @@ export async function getSettings(): Promise<AppSettings> {
       invoicePrefs: normalizeInvoicePrefs(saved?.invoicePrefs ?? null),
     };
   }
+  // Per-workspace config lives on the active workspace (organizations) row.
   const supabase = await createClient();
-  const { data } = await supabase.from("user_settings").select("*").maybeSingle();
-  const saved = data as UserSettingsRow | null;
+  const wsId = await getActiveWorkspaceId();
+  const { data } = await supabase
+    .from("organizations")
+    .select("*")
+    .eq("id", wsId)
+    .maybeSingle();
+  const saved = data as OrganizationRow | null;
   const rates = { ...DEFAULT_RATES, ...(saved?.rates ?? {}), ...live };
   const baseCurrency = saved?.base_currency || (await defaultBaseCurrency());
   return {
@@ -1364,18 +1365,23 @@ export async function updateSettings(raw: AppSettings): Promise<AppSettings> {
     revalidatePath("/settings");
     return s;
   }
+  // Currency/rates/default-account/invoice-prefs are per-workspace → write the
+  // active workspace (organizations) row, scoped to the owner as defense in depth.
   const userId = await getUserId();
+  const wsId = await getActiveWorkspaceId();
   const supabase = await createClient();
-  await supabase.from("user_settings").upsert({
-    user_id: userId,
-    base_currency: s.baseCurrency,
-    rates: s.rates,
-    default_account_id: s.defaultAccountId ?? null,
-    // Only touch invoice_prefs when this call carries it, so a currency save
-    // doesn't wipe the saved invoice default (upsert only sets provided columns).
-    ...(s.invoicePrefs !== undefined ? { invoice_prefs: s.invoicePrefs } : {}),
-    updated_at: new Date().toISOString(),
-  });
+  await supabase
+    .from("organizations")
+    .update({
+      base_currency: s.baseCurrency,
+      rates: s.rates,
+      default_account_id: s.defaultAccountId ?? null,
+      // Only touch invoice_prefs when this call carries it, so a currency save
+      // doesn't wipe the saved invoice default.
+      ...(s.invoicePrefs !== undefined ? { invoice_prefs: s.invoicePrefs } : {}),
+    })
+    .eq("id", wsId)
+    .eq("user_id", userId);
   revalidatePath("/");
   revalidatePath("/transactions");
   revalidatePath("/reports");
@@ -1384,6 +1390,139 @@ export async function updateSettings(raw: AppSettings): Promise<AppSettings> {
   revalidatePath("/ledger");
   revalidatePath("/settings");
   return s;
+}
+
+// ── Workspaces ──────────────────────────────────────────────────────────────
+
+/** Starter categories seeded into every new workspace (mirrors the signup trigger). */
+const STARTER_CATEGORIES: ReadonlyArray<{
+  name: string;
+  kind: CategoryRow["kind"];
+  color: string;
+}> = [
+  { name: "Income", kind: "income", color: "var(--income)" },
+  { name: "Housing", kind: "expense", color: "oklch(0.55 0.11 250)" },
+  { name: "Groceries", kind: "expense", color: "oklch(0.62 0.12 150)" },
+  { name: "Dining", kind: "expense", color: "oklch(0.66 0.14 50)" },
+  { name: "Transport", kind: "expense", color: "oklch(0.6 0.11 280)" },
+  { name: "Subscriptions", kind: "expense", color: "oklch(0.6 0.13 330)" },
+  { name: "Shopping", kind: "expense", color: "oklch(0.68 0.13 90)" },
+  { name: "Health", kind: "expense", color: "oklch(0.64 0.1 200)" },
+  { name: "Utilities", kind: "expense", color: "oklch(0.58 0.06 70)" },
+];
+
+async function seedStarterCategories(userId: string, orgId: string): Promise<void> {
+  const now = new Date().toISOString();
+  for (const c of STARTER_CATEGORIES) {
+    await db.insert("categories", {
+      id: randomUUID(),
+      user_id: userId,
+      org_id: orgId, // explicit — the new workspace isn't active yet
+      name: c.name,
+      kind: c.kind,
+      color: c.color,
+      parent_id: null,
+      created_at: now,
+    } as CategoryRow);
+  }
+}
+
+/** Every workspace the user owns, oldest first. */
+export async function listWorkspaces(): Promise<Workspace[]> {
+  if (!SUPABASE_CONFIGURED) return [{ id: DEMO_WORKSPACE_ID, name: "Personal" }];
+  const rows = (await db.selectAll("organizations")) as OrganizationRow[];
+  return rows
+    .slice()
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
+    .map((o) => ({ id: o.id, name: o.name }));
+}
+
+/** The active workspace id for the current user. */
+export async function getActiveWorkspace(): Promise<string> {
+  return getActiveWorkspaceId();
+}
+
+/** Set the active workspace (verifying ownership first). */
+export async function switchWorkspace(id: string): Promise<void> {
+  if (!SUPABASE_CONFIGURED) return;
+  const userId = await getUserId();
+  const supabase = await createClient();
+  const { data: owned } = await supabase
+    .from("organizations")
+    .select("id")
+    .eq("id", id)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (!owned) throw new Error("Workspace not found");
+  await supabase
+    .from("user_settings")
+    .update({ active_workspace_id: id })
+    .eq("user_id", userId);
+  revalidatePath("/", "layout");
+}
+
+/** Create a new (empty) workspace, seed starter categories, and switch into it. */
+export async function createWorkspace(rawName: string): Promise<Workspace | null> {
+  if (!SUPABASE_CONFIGURED) return null;
+  const name = rawName.trim().slice(0, 60) || "Untitled";
+  const userId = await getUserId();
+  const current = await getSettings(); // inherit the current display currency
+  const org = (await db.insert("organizations", {
+    id: randomUUID(),
+    user_id: userId,
+    name,
+    plan: "business",
+    base_currency: current.baseCurrency,
+    rates: {},
+    default_account_id: null,
+    invoice_prefs: null,
+    created_at: new Date().toISOString(),
+  } as OrganizationRow)) as OrganizationRow;
+  await seedStarterCategories(userId, org.id);
+  await switchWorkspace(org.id);
+  return { id: org.id, name: org.name };
+}
+
+/** Rename a workspace the user owns. */
+export async function renameWorkspace(id: string, rawName: string): Promise<void> {
+  if (!SUPABASE_CONFIGURED) return;
+  const name = rawName.trim().slice(0, 60);
+  if (!name) return;
+  const userId = await getUserId();
+  const supabase = await createClient();
+  await supabase
+    .from("organizations")
+    .update({ name })
+    .eq("id", id)
+    .eq("user_id", userId);
+  revalidatePath("/", "layout");
+}
+
+/**
+ * Delete a workspace and all its data (DB cascade). Refuses the user's last
+ * workspace; if the active one is deleted, moves the user to another first.
+ */
+export async function deleteWorkspace(id: string): Promise<void> {
+  if (!SUPABASE_CONFIGURED) return;
+  const userId = await getUserId();
+  const supabase = await createClient();
+  const { data: all } = await supabase
+    .from("organizations")
+    .select("id")
+    .eq("user_id", userId);
+  const owned = (all ?? []).map((o) => o.id as string);
+  if (!owned.includes(id)) throw new Error("Workspace not found");
+  if (owned.length <= 1) throw new Error("You must keep at least one workspace.");
+
+  if ((await getActiveWorkspaceId()) === id) {
+    const next = owned.find((o) => o !== id)!;
+    await supabase
+      .from("user_settings")
+      .update({ active_workspace_id: next })
+      .eq("user_id", userId);
+  }
+  await supabase.from("organizations").delete().eq("id", id).eq("user_id", userId);
+  revalidatePath("/", "layout");
 }
 
 // ── Budgets ─────────────────────────────────────────────────────────────────

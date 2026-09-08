@@ -15,6 +15,12 @@ import type {
   RecurringCadence,
 } from "@/lib/schema";
 
+/** A workspace ("book") the user can switch between (Personal, Business, …). */
+export type Workspace = {
+  id: string;
+  name: string;
+};
+
 export type Asset = {
   id: string;
   name: string;

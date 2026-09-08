@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { WorkspaceSwitcher } from "@/components/workspaces/workspace-switcher";
 import {
   LayoutDashboard,
   ArrowLeftRight,
@@ -122,17 +123,7 @@ export function AppSidebar({
   return (
     <Sidebar collapsible="icon" className="border-r border-border/60">
       <SidebarHeader className="px-3 pt-4 pb-2">
-        <Link
-          href="/dashboard"
-          className="flex items-center gap-2.5 px-1 group-data-[collapsible=icon]:justify-center"
-        >
-          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-            <Mark />
-          </span>
-          <span className="display text-lg leading-none tracking-tight group-data-[collapsible=icon]:hidden">
-            Ledger
-          </span>
-        </Link>
+        <WorkspaceSwitcher />
       </SidebarHeader>
 
       <SidebarContent className="px-2">
@@ -222,35 +213,3 @@ export function AppSidebar({
   );
 }
 
-/** Minimal geometric ledger mark — two stacked balanced bars. */
-function Mark() {
-  return (
-    <svg
-      width="16"
-      height="16"
-      viewBox="0 0 16 16"
-      fill="none"
-      aria-hidden="true"
-    >
-      <rect x="2" y="3.5" width="12" height="2.2" rx="1.1" fill="currentColor" />
-      <rect
-        x="2"
-        y="7.4"
-        width="8"
-        height="2.2"
-        rx="1.1"
-        fill="currentColor"
-        opacity="0.7"
-      />
-      <rect
-        x="2"
-        y="11.3"
-        width="10.5"
-        height="2.2"
-        rx="1.1"
-        fill="currentColor"
-        opacity="0.45"
-      />
-    </svg>
-  );
-}

@@ -10,6 +10,7 @@ import { PrivacyGate } from "@/components/privacy-gate";
 import { TransactionsProvider } from "@/components/transactions/transactions-provider";
 import { InvoicesProvider } from "@/components/invoices/invoices-provider";
 import { PlanProvider } from "@/components/plan-provider";
+import { WorkspaceProvider } from "@/components/workspaces/workspace-provider";
 import { NewTransactionButton } from "@/components/transactions/new-transaction-button";
 import { RouteProgress } from "@/components/ui/route-progress";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
@@ -17,6 +18,8 @@ import {
   getCurrentUser,
   getEntitlement,
   getSettings,
+  listWorkspaces,
+  getActiveWorkspace,
   listAccounts,
   listAssets,
   listAllLots,
@@ -70,6 +73,8 @@ export default async function AppLayout({
     trialing: false,
     founding: false,
   };
+  let workspaces: Awaited<ReturnType<typeof listWorkspaces>> = [];
+  let activeWorkspaceId = "";
   let loadFailed = false;
 
   try {
@@ -89,6 +94,8 @@ export default async function AppLayout({
       initialSettings,
       user,
       entitlement,
+      workspaces,
+      activeWorkspaceId,
     ] = await Promise.all([
       listTransactions(),
       listAccounts(),
@@ -105,6 +112,8 @@ export default async function AppLayout({
       getSettings(),
       getCurrentUser(),
       getEntitlement(),
+      listWorkspaces(),
+      getActiveWorkspace(),
     ]);
   } catch (err) {
     // Re-throw Next's control-flow signals (dynamic-rendering bailout, redirect,
@@ -124,6 +133,10 @@ export default async function AppLayout({
   // Local file mode returns pro:true, so dev is never gated.
   if (!entitlement.pro) redirect("/paywall");
 
+  // The active workspace keys the data providers — switching workspaces changes
+  // this id, remounting them so they re-seed from the refreshed per-workspace data.
+  const activeId = activeWorkspaceId || workspaces[0]?.id || "";
+
   return (
     <SidebarProvider>
       {/* Covers the app on every load and asks whether to blur amounts before
@@ -131,8 +144,10 @@ export default async function AppLayout({
       <PrivacyGate />
       <RouteProgress />
       <PlanProvider value={entitlement}>
+      <WorkspaceProvider value={{ workspaces, activeId }}>
       <ConfirmProvider>
       <TransactionsProvider
+        key={activeId}
         initialTransactions={initialTransactions}
         initialAccounts={initialAccounts}
         initialCategories={initialCategories}
@@ -145,6 +160,7 @@ export default async function AppLayout({
         initialSettings={initialSettings}
       >
       <InvoicesProvider
+        key={activeId}
         initialClients={initialClients}
         initialInvoices={initialInvoices}
         initialPaymentAccounts={initialPaymentAccounts}
@@ -171,6 +187,7 @@ export default async function AppLayout({
       </InvoicesProvider>
       </TransactionsProvider>
       </ConfirmProvider>
+      </WorkspaceProvider>
       </PlanProvider>
     </SidebarProvider>
   );

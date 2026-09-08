@@ -166,7 +166,26 @@ export type UserSettingsRow = {
   default_account_id: string | null;
   timezone: string | null; // IANA tz for local-night net-worth snapshots
   invoice_prefs: Record<string, boolean> | null; // saved default (see InvoiceFieldPrefs)
+  active_workspace_id: string | null; // which workspace/book is currently active
   updated_at: string;
+};
+
+/**
+ * A workspace (aka "book") — reuses the `organizations` table. A solo user owns
+ * one or more; everything financial is scoped to a workspace via `org_id`. The
+ * per-workspace config (currency, rates, default account, invoice prefs) lives
+ * here, not on user_settings.
+ */
+export type OrganizationRow = {
+  id: string;
+  user_id: string | null; // owner
+  name: string;
+  plan: string;
+  base_currency: string;
+  rates: Record<string, number>;
+  default_account_id: string | null;
+  invoice_prefs: Record<string, boolean> | null;
+  created_at: string;
 };
 
 export type FeedbackRow = {
@@ -194,6 +213,7 @@ export type NewFeedbackInput = {
 export type NetWorthSnapshotRow = {
   id: string;
   user_id: string;
+  org_id: string | null; // workspace the snapshot belongs to
   as_of: string; // yyyy-mm-dd closing date
   value_minor: number;
   base_currency: string;
@@ -398,6 +418,7 @@ export type SubscriptionRow = {
 /** Maps a table name to its row type — used by the generic data store. */
 export type TableMap = {
   profiles: ProfileRow;
+  organizations: OrganizationRow;
   accounts: AccountRow;
   categories: CategoryRow;
   transactions: TransactionRow;
@@ -418,6 +439,30 @@ export type TableMap = {
 };
 
 export type TableName = keyof TableMap;
+
+/**
+ * Tables whose rows belong to a single workspace and must be filtered by the
+ * active `org_id` on read and stamped with it on insert. Source of truth for the
+ * db layer's workspace scoping — keep in sync with the `org_id` columns in SQL.
+ * Excludes: child tables (transaction_lines, invoice_lines — parent-derived),
+ * organizations (the workspace list itself), and per-user tables
+ * (user_settings, profiles, subscriptions).
+ */
+export const WORKSPACE_SCOPED: ReadonlySet<TableName> = new Set([
+  "accounts",
+  "categories",
+  "transactions",
+  "budgets",
+  "assets",
+  "asset_lots",
+  "goals",
+  "recurring_rules",
+  "feedback",
+  "clients",
+  "invoices",
+  "payment_accounts",
+  "net_worth_snapshots",
+]);
 
 /** A line item when itemizing a transaction. */
 export type NewTransactionLine = {

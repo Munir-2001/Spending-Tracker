@@ -6,6 +6,7 @@ import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { ArrowRight } from "lucide-react";
 
 import { LedgerMark } from "@/components/logo";
+import { HeroApp } from "@/components/landing/hero-app";
 import { StorySteps } from "@/components/landing/story";
 import { Notice } from "@/components/landing/notice";
 import { Tape } from "@/components/landing/tape";
@@ -130,7 +131,7 @@ export function Landing() {
         </motion.header>
 
         {/* Hero */}
-        <section className="mx-auto max-w-5xl px-6 pt-16 pb-14 md:px-10 md:pt-28 md:pb-20">
+        <section className="mx-auto grid max-w-[78rem] grid-cols-1 items-center gap-x-12 gap-y-12 px-6 pt-14 pb-16 md:px-10 md:pt-24 md:pb-24 lg:grid-cols-[1fr_minmax(0,38rem)]">
           <motion.div variants={stagger} initial="hidden" animate="show">
             <motion.p
               variants={rise}
@@ -142,7 +143,7 @@ export function Landing() {
 
             <motion.h1
               variants={rise}
-              className="display mt-6 max-w-3xl text-[clamp(2.8rem,9vw,6.5rem)] leading-[0.92] tracking-tight"
+              className="display mt-6 max-w-2xl text-[clamp(2.6rem,6.2vw,4.7rem)] leading-[0.95] tracking-tight"
             >
               Know what
               <br />
@@ -205,9 +206,19 @@ export function Landing() {
               style={{ color: `${CREAM}70` }}
             >
               {paywallOn
-                ? "$0.99 for your first 7 days, then $12/month. Cancel anytime."
+                ? "$0.99 your first week, then $3.99/week — or $100/year."
                 : "Free to use — no card required."}
             </motion.p>
+          </motion.div>
+
+          {/* Interactive product preview — the real app, live and clickable */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.8, delay: 0.25 }}
+            className="w-full [perspective:1200px]"
+          >
+            <HeroApp />
           </motion.div>
         </section>
 

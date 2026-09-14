@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { SUPPORT_EMAIL } from "@/lib/site";
+import { createClient } from "@/lib/supabase/server";
 
 export const metadata = {
   title: "Privacy Policy · Ledger",
@@ -26,7 +27,12 @@ function Section({
   );
 }
 
-export default function PublicPrivacyPage() {
+export default async function PublicPrivacyPage() {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const authed = Boolean(user);
   return (
     <div className="min-h-dvh bg-background">
       <header className="sticky top-0 z-10 border-b border-border/60 bg-background/80 backdrop-blur-md">
@@ -40,10 +46,10 @@ export default function PublicPrivacyPage() {
             </span>
           </Link>
           <Link
-            href="/"
+            href={authed ? "/dashboard" : "/"}
             className="text-sm font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
           >
-            Sign in
+            {authed ? "Back to app →" : "Home"}
           </Link>
         </div>
       </header>

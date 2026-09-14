@@ -124,9 +124,22 @@ const STEPS = [
   },
 ];
 
-export function StorySteps() {
+export function StorySteps({ light = false }: { light?: boolean }) {
   return (
-    <section id="how" className="mx-auto max-w-5xl px-6 py-24 md:px-10 md:py-32">
+    <div
+      className="relative w-full"
+      style={{ backgroundColor: "#0E0D0B", color: "#F6F1E7" }}
+    >
+      {/* In light mode this stays a dark editorial showcase band — soft-fade its
+          edges into the light page above and below. */}
+      {light && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 z-10 h-20"
+          style={{ background: "linear-gradient(to bottom, #F7F2E8, transparent)" }}
+        />
+      )}
+      <section id="how" className="mx-auto max-w-5xl px-6 py-24 md:px-10 md:py-32">
       <motion.p
         initial={{ opacity: 0, y: 16 }}
         whileInView={{ opacity: 1, y: 0 }}
@@ -143,7 +156,15 @@ export function StorySteps() {
           <Step key={s.n} step={s} reverse={i % 2 === 1} />
         ))}
       </div>
-    </section>
+      </section>
+      {light && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-10 h-20"
+          style={{ background: "linear-gradient(to top, #F7F2E8, transparent)" }}
+        />
+      )}
+    </div>
   );
 }
 

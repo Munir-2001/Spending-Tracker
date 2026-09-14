@@ -39,6 +39,7 @@ export function Tape({
   direction,
   slow,
   items = SAMPLE_TAPE,
+  fg = CREAM,
 }: {
   /** Honor prefers-reduced-motion — freezes the marquee when true. */
   reduce: boolean;
@@ -47,11 +48,13 @@ export function Tape({
   /** Slower cadence (60s vs 44s) for a secondary, offset row. */
   slow?: boolean;
   items?: TapeItem[];
+  /** Foreground color (flips with the landing theme). Defaults to cream. */
+  fg?: string;
 }) {
   // Duplicate the set so the -50% keyframe loops seamlessly.
   const doubled = [...items, ...items];
   const color = (t: TapeItem["t"]) =>
-    t === "up" ? GREEN : t === "down" ? RED : `${CREAM}88`;
+    t === "up" ? GREEN : t === "down" ? RED : `${fg}88`;
   const animation = reduce
     ? undefined
     : `ledger-marquee-${direction === -1 ? "l" : "r"} ${slow ? 60 : 44}s linear infinite`;
@@ -64,14 +67,14 @@ export function Tape({
       >
         {doubled.map((e, i) => (
           <span key={i} className="flex shrink-0 items-center gap-3 whitespace-nowrap text-sm">
-            <span className="num text-[11px] uppercase tracking-widest" style={{ color: `${CREAM}55` }}>
+            <span className="num text-[11px] uppercase tracking-widest" style={{ color: `${fg}55` }}>
               {e.k}
             </span>
-            <span style={{ color: `${CREAM}c0` }}>{e.m}</span>
+            <span style={{ color: `${fg}c0` }}>{e.m}</span>
             <span className="num tabular-nums" style={{ color: color(e.t) }}>
               {e.a}
             </span>
-            <span aria-hidden style={{ color: `${CREAM}30` }}>
+            <span aria-hidden style={{ color: `${fg}30` }}>
               ·
             </span>
           </span>

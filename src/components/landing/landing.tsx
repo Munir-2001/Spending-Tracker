@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, useReducedMotion, type Variants } from "framer-motion";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Sun, Moon } from "lucide-react";
+import { useTheme } from "next-themes";
 
 import { LedgerMark } from "@/components/logo";
 import { HeroApp } from "@/components/landing/hero-app";
@@ -13,12 +14,8 @@ import { Tape } from "@/components/landing/tape";
 import { createClient } from "@/lib/supabase/client";
 import { track } from "@vercel/analytics";
 
-// Self-contained "quiet-luxury" palette — the marketing surface commits to a
-// single dark, editorial look regardless of the app's light/dark theme.
-const INK = "#0E0D0B";
-const CREAM = "#F6F1E7";
-const GOLD = "#E9B44C";
-
+// Palette is computed per-theme inside the component (see below), so the same
+// INK/CREAM/GOLD names flip between the dark editorial look and a warm light one.
 const rise: Variants = {
   hidden: { opacity: 0, y: 22 },
   show: {
@@ -39,6 +36,17 @@ export function Landing() {
   const [full, setFull] = useState(false);
   // One switch flips the whole funnel: free launch mode vs the paid $0.99 trial.
   const paywallOn = process.env.NEXT_PUBLIC_PAYWALL_ENABLED === "1";
+
+  // Theme-aware palette. The SAME names (INK = surface, CREAM = foreground text,
+  // GOLD = accent) flip between the dark editorial look and a warm light one, so
+  // every downstream `${CREAM}88` / `backgroundColor: INK` reference just works.
+  const { resolvedTheme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const light = mounted && resolvedTheme === "light";
+  const INK = light ? "#F7F2E8" : "#0E0D0B"; // page surface
+  const CREAM = light ? "#211B12" : "#F6F1E7"; // foreground (used with alpha)
+  const GOLD = light ? "#B07714" : "#E9B44C"; // accent
 
   // Surface a failed OAuth round-trip (?error) or a signup rejected because we're
   // at the 100-user cap (?full), and pre-emptively show the cap to new visitors.
@@ -96,12 +104,13 @@ export function Landing() {
       {/* gold aura + grain */}
       <div
         aria-hidden
-        className="pointer-events-none fixed inset-0 z-0 opacity-[0.5]"
+        className="pointer-events-none fixed inset-0 z-0"
         style={{
+          opacity: light ? 0.32 : 0.5,
           background: `radial-gradient(60% 42% at 50% 8%, ${GOLD}22 0%, transparent 62%)`,
         }}
       />
-      <Grain />
+      <Grain light={light} />
 
       <div className="relative z-10">
         {/* Nav */}
@@ -120,14 +129,27 @@ export function Landing() {
             </span>
             <span className="display text-lg tracking-tight">Ledger</span>
           </span>
-          <button
-            onClick={signIn}
-            disabled={loading}
-            className="group flex items-center gap-1.5 text-sm transition-opacity hover:opacity-70 disabled:opacity-50"
-          >
-            Sign in
-            <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
-          </button>
+          <div className="flex items-center gap-2">
+            {mounted && (
+              <button
+                type="button"
+                onClick={() => setTheme(light ? "dark" : "light")}
+                aria-label="Toggle light or dark mode"
+                className="flex size-8 items-center justify-center rounded-lg transition-opacity hover:opacity-70"
+                style={{ color: CREAM }}
+              >
+                {light ? <Moon className="size-4" /> : <Sun className="size-4" />}
+              </button>
+            )}
+            <button
+              onClick={signIn}
+              disabled={loading}
+              className="group flex items-center gap-1.5 text-sm transition-opacity hover:opacity-70 disabled:opacity-50"
+            >
+              Sign in
+              <ArrowRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
+            </button>
+          </div>
         </motion.header>
 
         {/* Hero */}
@@ -230,13 +252,13 @@ export function Landing() {
           className="relative flex flex-col gap-px border-y"
           style={{ borderColor: `${CREAM}16` }}
         >
-          <Tape reduce={!!reduce} direction={-1} />
+          <Tape reduce={!!reduce} direction={-1} fg={CREAM} />
           <div style={{ height: 1, backgroundColor: `${CREAM}12` }} />
-          <Tape reduce={!!reduce} direction={1} slow />
+          <Tape reduce={!!reduce} direction={1} slow fg={CREAM} />
         </motion.div>
 
         {/* Story — visual, animated walkthrough */}
-        <StorySteps />
+        <StorySteps light={light} />
 
         {/* Closing */}
         <section className="mx-auto max-w-5xl px-6 pb-28 text-center md:px-10 md:pb-40">
@@ -322,13 +344,16 @@ export function Landing() {
 }
 
 /** Ultra-subtle film grain via an inline SVG turbulence texture. */
-function Grain() {
+function Grain({ light }: { light: boolean }) {
   const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%' height='100%' filter='url(%23n)' opacity='0.5'/></svg>`;
   return (
     <div
       aria-hidden
-      className="pointer-events-none fixed inset-0 z-0 opacity-[0.05]"
-      style={{ backgroundImage: `url("data:image/svg+xml,${svg}")` }}
+      className="pointer-events-none fixed inset-0 z-0"
+      style={{
+        opacity: light ? 0.035 : 0.05,
+        backgroundImage: `url("data:image/svg+xml,${svg}")`,
+      }}
     />
   );
 }

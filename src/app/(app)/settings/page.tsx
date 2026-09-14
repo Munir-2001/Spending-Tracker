@@ -17,6 +17,7 @@ import {
 import { useAppData } from "@/components/transactions/transactions-provider";
 import { useEntitlement } from "@/components/plan-provider";
 import { WorkspaceManager } from "@/components/workspaces/workspace-manager";
+import { DangerZone } from "@/components/settings/danger-zone";
 import { FieldToggles } from "@/components/invoices/field-toggles";
 import { CURRENCIES } from "@/lib/currency";
 import { cn } from "@/lib/utils";
@@ -212,6 +213,11 @@ export default function SettingsPage() {
         <div className="mt-4 flex justify-end">
           <Button onClick={save}>Save settings</Button>
         </div>
+      </Reveal>
+
+      {/* Danger zone — delete data / delete account */}
+      <Reveal delay={0.25}>
+        <DangerZone />
       </Reveal>
     </div>
   );

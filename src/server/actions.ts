@@ -11,6 +11,7 @@ import {
   getActiveWorkspaceId,
   DEMO_WORKSPACE_ID,
 } from "@/server/workspace";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { enc, dec, hashToken } from "@/server/crypto";
 import {
   accountToUi,
@@ -1523,6 +1524,46 @@ export async function deleteWorkspace(id: string): Promise<void> {
   }
   await supabase.from("organizations").delete().eq("id", id).eq("user_id", userId);
   revalidatePath("/", "layout");
+}
+
+// ── Account & data (danger zone) ──────────────────────────────────────────────
+
+/** Wipe ALL of the user's financial data, then hand back a fresh empty workspace. */
+export async function deleteAllData(): Promise<void> {
+  if (!SUPABASE_CONFIGURED) return;
+  const userId = await getUserId();
+  const supabase = await createClient();
+  // Deleting the user's workspaces cascades every scoped table (accounts,
+  // transactions, assets, invoices, snapshots, …).
+  await supabase.from("organizations").delete().eq("user_id", userId);
+  // Fresh start: a new empty "Personal" workspace with starter categories.
+  const { data: org } = await supabase
+    .from("organizations")
+    .insert({ user_id: userId, name: "Personal", base_currency: "USD" })
+    .select("id")
+    .single();
+  if (org?.id) {
+    await seedStarterCategories(userId, org.id as string);
+    await supabase
+      .from("user_settings")
+      .update({ active_workspace_id: org.id })
+      .eq("user_id", userId);
+  }
+  revalidatePath("/", "layout");
+}
+
+/**
+ * Permanently delete the user's account and all their data. Removes the auth
+ * user via the service role, which cascades profile → workspaces → all data.
+ * The caller should redirect to the landing page afterward (the session is dead).
+ */
+export async function deleteUserAccount(): Promise<void> {
+  if (!SUPABASE_CONFIGURED) return;
+  const userId = await getUserId();
+  const admin = createAdminClient();
+  if (!admin) throw new Error("Account deletion isn't available right now.");
+  const { error } = await admin.auth.admin.deleteUser(userId);
+  if (error) throw new Error(error.message);
 }
 
 // ── Budgets ─────────────────────────────────────────────────────────────────

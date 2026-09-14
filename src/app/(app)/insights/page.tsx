@@ -10,6 +10,7 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
+  LabelList,
 } from "recharts";
 import { PieChart as PieIcon, BarChart3, Check } from "lucide-react";
 
@@ -27,13 +28,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useAppData } from "@/components/transactions/transactions-provider";
 import { SpendTimeline } from "@/components/insights/spend-timeline";
 import { categoryLinesOf } from "@/lib/compute";
 import { formatMoney, formatCompact, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-type Period = "month" | "quarter" | "year" | "all";
+type Period = "month" | "quarter" | "year" | "all" | "custom";
 type ChartType = "pie" | "bar";
 type Sort = "high" | "low" | "name";
 type GroupBy = "parent" | "sub";
@@ -44,11 +46,20 @@ const PERIODS: { value: Period; label: string }[] = [
   { value: "quarter", label: "This quarter" },
   { value: "year", label: "This year" },
   { value: "all", label: "All time" },
+  { value: "custom", label: "Custom" },
 ];
+
+const pad = (n: number) => String(n).padStart(2, "0");
+const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
 export default function InsightsPage() {
   const { items, categories, baseCurrency, fx } = useAppData();
   const [period, setPeriod] = useState<Period>("month");
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date();
+    return ymd(new Date(d.getFullYear(), d.getMonth(), 1));
+  });
+  const [endDate, setEndDate] = useState(() => ymd(new Date()));
   const [chart, setChart] = useState<ChartType>("pie");
   const [sort, setSort] = useState<Sort>("high");
   const [groupBy, setGroupBy] = useState<GroupBy>("parent");
@@ -57,15 +68,19 @@ export default function InsightsPage() {
   const now = useMemo(() => new Date(), []);
   const inPeriod = useMemo(() => {
     return (iso: string) => {
-      const d = new Date(iso);
       if (period === "all") return true;
+      if (period === "custom") {
+        const day = iso.slice(0, 10);
+        return day >= startDate && day <= endDate;
+      }
+      const d = new Date(iso);
       if (d.getFullYear() !== now.getFullYear()) return false;
       if (period === "year") return true;
       if (period === "quarter")
         return Math.floor(d.getMonth() / 3) === Math.floor(now.getMonth() / 3);
       return d.getMonth() === now.getMonth();
     };
-  }, [period, now]);
+  }, [period, now, startDate, endDate]);
 
   // Spend by actual category (leaf) + rolled-up to parent, both unsorted.
   const { parentRows, leafRows, income } = useMemo(() => {
@@ -169,7 +184,8 @@ export default function InsightsPage() {
 
       {/* Controls */}
       <Reveal delay={0.1}>
-        <div className="mt-4 flex flex-wrap items-center gap-2">
+        <div className="mt-4">
+          <div className="flex flex-wrap items-center gap-2">
           <Segmented value={period} onChange={(v) => setPeriod(v as Period)} options={PERIODS} />
           <Segmented
             value={groupBy}
@@ -199,6 +215,28 @@ export default function InsightsPage() {
               </ChartToggle>
             </div>
           </div>
+          </div>
+          {period === "custom" && (
+            <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-muted/30 p-2.5">
+              <span className="text-xs font-medium text-muted-foreground">From</span>
+              <Input
+                type="date"
+                value={startDate}
+                max={endDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="num h-9 w-[9.5rem]"
+              />
+              <span className="text-xs font-medium text-muted-foreground">To</span>
+              <Input
+                type="date"
+                value={endDate}
+                min={startDate}
+                max={ymd(new Date())}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="num h-9 w-[9.5rem]"
+              />
+            </div>
+          )}
         </div>
       </Reveal>
 
@@ -236,38 +274,63 @@ export default function InsightsPage() {
                 </PieChart>
               </ChartContainer>
             ) : (
-              <ChartContainer config={{}} className="h-[300px] w-full">
-                <BarChart data={visible} layout="vertical" margin={{ left: 8, right: 16 }}>
-                  <CartesianGrid horizontal={false} stroke="var(--border)" strokeDasharray="3 3" />
-                  <XAxis
-                    type="number"
-                    tickFormatter={(v) => formatCompact(v as number, baseCurrency)}
-                    tickLine={false}
-                    axisLine={false}
-                    className="text-xs"
-                  />
-                  <YAxis type="category" dataKey="label" width={110} tickLine={false} axisLine={false} className="text-xs" />
-                  <ChartTooltip
-                    cursor={{ fill: "var(--muted)" }}
-                    content={
-                      <ChartTooltipContent
-                        hideLabel
-                        formatter={(value, name) => (
-                          <div className="flex w-full items-center justify-between gap-4">
-                            <span className="text-muted-foreground">{name}</span>
-                            <span className="num font-medium">{fmt(value as number)}</span>
-                          </div>
-                        )}
+              <div
+                className="w-full"
+                style={{ height: Math.min(720, Math.max(300, visible.length * 46)) }}
+              >
+                <ChartContainer config={{}} className="h-full w-full">
+                  <BarChart
+                    data={visible}
+                    layout="vertical"
+                    margin={{ left: 8, right: 64, top: 4, bottom: 4 }}
+                    barCategoryGap="22%"
+                  >
+                    <CartesianGrid horizontal={false} stroke="var(--border)" strokeDasharray="3 3" />
+                    <XAxis
+                      type="number"
+                      tickFormatter={(v) => formatCompact(v as number, baseCurrency)}
+                      tickLine={false}
+                      axisLine={false}
+                      className="text-xs"
+                    />
+                    <YAxis
+                      type="category"
+                      dataKey="label"
+                      width={132}
+                      tickLine={false}
+                      axisLine={false}
+                      className="text-xs"
+                    />
+                    <ChartTooltip
+                      cursor={{ fill: "var(--muted)" }}
+                      content={
+                        <ChartTooltipContent
+                          hideLabel
+                          formatter={(value, name) => (
+                            <div className="flex w-full items-center justify-between gap-4">
+                              <span className="text-muted-foreground">{name}</span>
+                              <span className="num font-medium">{fmt(value as number)}</span>
+                            </div>
+                          )}
+                        />
+                      }
+                    />
+                    <Bar dataKey="amount" radius={6} maxBarSize={30}>
+                      {visible.map((d) => (
+                        <Cell key={d.id} fill={d.tint} />
+                      ))}
+                      <LabelList
+                        dataKey="amount"
+                        position="right"
+                        offset={8}
+                        className="fill-foreground"
+                        style={{ fontSize: 11 }}
+                        formatter={(value) => fmt(Number(value))}
                       />
-                    }
-                  />
-                  <Bar dataKey="amount" radius={5}>
-                    {visible.map((d) => (
-                      <Cell key={d.id} fill={d.tint} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ChartContainer>
+                    </Bar>
+                  </BarChart>
+                </ChartContainer>
+              </div>
             )}
           </div>
 

@@ -12,6 +12,7 @@ import { InvoicesProvider } from "@/components/invoices/invoices-provider";
 import { PlanProvider } from "@/components/plan-provider";
 import { WorkspaceProvider } from "@/components/workspaces/workspace-provider";
 import { NewTransactionButton } from "@/components/transactions/new-transaction-button";
+import { VoiceCapture } from "@/components/transactions/voice-capture";
 import { RouteProgress } from "@/components/ui/route-progress";
 import { ConfirmProvider } from "@/components/ui/confirm-dialog";
 import {
@@ -179,6 +180,7 @@ export default async function AppLayout({
           <div className="ml-auto flex items-center gap-1.5">
             <PrivacyToggle />
             <ModeToggle />
+            <VoiceCapture />
             <NewTransactionButton />
           </div>
         </header>

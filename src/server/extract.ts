@@ -21,12 +21,23 @@ type Provider = {
 
 /** The fallback chain, in priority order. Only entries with a key are tried. */
 function providers(): Provider[] {
+  const groqKey = process.env.GROQ_API_KEY;
+  // Groq's free chat model IDs change over time (llama-3.3-70b-versatile was
+  // retired). Default to gpt-oss-120b, fall back to the smaller 20b, both on the
+  // same key. Override with GROQ_MODEL.
+  const groqPrimary = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
   return [
     {
       name: "groq",
       baseUrl: "https://api.groq.com/openai/v1",
-      model: "llama-3.3-70b-versatile",
-      apiKey: process.env.GROQ_API_KEY,
+      model: groqPrimary,
+      apiKey: groqKey,
+    },
+    {
+      name: "groq-fallback",
+      baseUrl: "https://api.groq.com/openai/v1",
+      model: "openai/gpt-oss-20b",
+      apiKey: groqKey,
     },
     {
       name: "openrouter",
@@ -71,14 +82,21 @@ async function callProvider(
       }),
       signal: controller.signal,
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      console.error(
+        `[extract] ${provider.name} (${provider.model}) failed: ${res.status} ${body.slice(0, 300)}`
+      );
+      return null;
+    }
     const data = (await res.json().catch(() => null)) as {
       choices?: { message?: { content?: string } }[];
     } | null;
     const content = data?.choices?.[0]?.message?.content;
     return content && content.trim() ? content : null;
-  } catch {
+  } catch (err) {
     // Network error, timeout, or malformed response — let the chain try the next.
+    console.error(`[extract] ${provider.name} (${provider.model}) errored:`, err);
     return null;
   } finally {
     clearTimeout(timeout);

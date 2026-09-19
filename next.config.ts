@@ -13,10 +13,12 @@ const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   // Don't leak full URLs to other origins.
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
-  // Drop powerful APIs we never use.
+  // Drop powerful APIs. Microphone is allowed for our own origin (self) — the
+  // voice-capture feature needs getUserMedia; without this, the browser blocks
+  // the mic document-wide before any permission prompt can appear.
   {
     key: "Permissions-Policy",
-    value: "camera=(), microphone=(), geolocation=(), browsing-topics=()",
+    value: "camera=(), microphone=(self), geolocation=(), browsing-topics=()",
   },
   // Force HTTPS (ignored on http://localhost; active once deployed).
   {

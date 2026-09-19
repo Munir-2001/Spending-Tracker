@@ -97,6 +97,9 @@ export function VoiceCapture() {
   const [micPermission, setMicPermission] = useState<
     "unknown" | "prompt" | "granted" | "denied"
   >("unknown");
+  const [micError, setMicError] = useState<string | null>(null);
+  const [transcribing, setTranscribing] = useState(false);
+  const [transcribeAvailable, setTranscribeAvailable] = useState(false);
 
   // Review-card fields.
   const [merchant, setMerchant] = useState("");
@@ -108,6 +111,9 @@ export function VoiceCapture() {
 
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const finalRef = useRef("");
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const selectable = useMemo(() => accounts.filter((a) => !a.isGroup), [accounts]);
   const speechSupported = useMemo(() => getSpeechRecognitionCtor() !== null, []);
@@ -120,10 +126,33 @@ export function VoiceCapture() {
     return matched.length ? matched : categories;
   }, [categories, direction]);
 
-  // Stop any in-flight recognition when the component unmounts.
+  // Stop any in-flight capture when the component unmounts.
   useEffect(() => {
-    return () => recognitionRef.current?.stop();
+    return () => {
+      recognitionRef.current?.stop();
+      mediaRecorderRef.current?.stop();
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+    };
   }, []);
+
+  // Probe whether server-side (Groq Whisper) transcription is available. When it
+  // is, we record + upload for higher accuracy; otherwise fall back to the
+  // in-browser Web Speech API.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    fetch("/api/transactions/transcribe")
+      .then((r) => r.json())
+      .then((d: { available?: boolean }) => {
+        if (!cancelled) setTranscribeAvailable(Boolean(d?.available));
+      })
+      .catch(() => {
+        if (!cancelled) setTranscribeAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   // Reflect the browser's current mic-permission state while the dialog is open,
   // and keep it live if the user changes it in site settings.
@@ -151,24 +180,143 @@ export function VoiceCapture() {
   }, [open]);
 
   /**
-   * Explicitly ask for mic access so the browser shows its permission prompt —
-   * `SpeechRecognition.start()` alone does not reliably trigger it. Returns true
-   * when granted; the stream is released immediately since Web Speech opens its
-   * own capture.
+   * Open the mic (which also triggers the browser's permission prompt), surfacing
+   * the exact failure reason instead of failing silently. Returns the live
+   * MediaStream — the caller owns stopping its tracks — or null on failure.
    */
-  async function ensureMicPermission(): Promise<boolean> {
+  async function getMicStream(): Promise<MediaStream | null> {
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      return true; // Can't pre-check — let recognition surface its own error.
+      setMicError(
+        "This browser exposes no getUserMedia. Use Chrome on http://localhost or an https URL."
+      );
+      setMicPermission("denied");
+      return null;
     }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach((track) => track.stop());
       setMicPermission("granted");
-      return true;
-    } catch {
+      setMicError(null);
+      return stream;
+    } catch (err) {
+      // Surface the real reason instead of failing silently.
+      const name = err instanceof DOMException ? err.name : "Error";
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[voice] getUserMedia failed:", name, message, err);
+      setMicError(`${name}${message ? ` — ${message}` : ""}`);
       setMicPermission("denied");
-      return false;
+      return null;
     }
+  }
+
+  /** Web Speech path: verify access, then release the stream (it opens its own). */
+  async function ensureMicPermission(): Promise<boolean> {
+    const stream = await getMicStream();
+    if (!stream) return false;
+    stream.getTracks().forEach((track) => track.stop());
+    return true;
+  }
+
+  // ── Groq Whisper path: record audio, then upload for transcription ──────────
+
+  async function startRecording() {
+    const stream = await getMicStream();
+    if (!stream) {
+      toast.error("Microphone blocked", {
+        description: "Allow mic access for this site, then tap the mic again.",
+      });
+      return;
+    }
+    streamRef.current = stream;
+    chunksRef.current = [];
+    try {
+      const recorder = new MediaRecorder(stream);
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunksRef.current.push(event.data);
+      };
+      recorder.onstop = () => void finishRecording();
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setListening(true);
+    } catch {
+      stream.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      toast.error("Couldn't start recording. Type the sentence instead.");
+    }
+  }
+
+  function stopRecording() {
+    mediaRecorderRef.current?.stop(); // fires onstop → finishRecording()
+    setListening(false);
+  }
+
+  async function finishRecording() {
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    const recorder = mediaRecorderRef.current;
+    mediaRecorderRef.current = null;
+
+    const type = recorder?.mimeType || "audio/webm";
+    const blob = new Blob(chunksRef.current, { type });
+    chunksRef.current = [];
+    if (blob.size === 0) return;
+
+    const ext = type.includes("ogg")
+      ? "ogg"
+      : type.includes("mp4") || type.includes("m4a")
+        ? "mp4"
+        : "webm";
+
+    setTranscribing(true);
+    try {
+      const form = new FormData();
+      form.append("audio", new File([blob], `speech.${ext}`, { type }));
+      const res = await fetch("/api/transactions/transcribe", {
+        method: "POST",
+        body: form,
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { text?: string; needsClientFallback?: boolean; error?: string }
+        | null;
+      if (data?.text) {
+        const combined = (transcript.trim() ? `${transcript.trim()} ${data.text}` : data.text).trim();
+        setTranscript(combined);
+        // Auto-fill the itemized review card straight from the dictation.
+        await runParse(combined);
+      } else if (data?.needsClientFallback) {
+        toast.message("No transcription provider set — type the sentence below.");
+      } else {
+        toast.error(data?.error ?? "Couldn't transcribe. Try again or type it.");
+      }
+    } catch {
+      toast.error("Transcription failed. Type the sentence instead.");
+    } finally {
+      setTranscribing(false);
+    }
+  }
+
+  /** Route the mic button to the active capture mode (Groq record vs Web Speech). */
+  function toggleMic() {
+    if (listening) {
+      if (transcribeAvailable) stopRecording();
+      else stopListening();
+      return;
+    }
+    if (transcribeAvailable) void startRecording();
+    else void startListening();
+  }
+
+  /** A plain-English hint for the exact getUserMedia failure. */
+  function micErrorHint(error: string): string {
+    if (error.startsWith("NotAllowedError") || error.startsWith("SecurityError")) {
+      return "Blocked at the OS level. On macOS: System Settings → Privacy & Security → Microphone → enable Chrome, then FULLY quit (⌘Q) and reopen Chrome.";
+    }
+    if (error.startsWith("NotFoundError") || error.startsWith("OverconstrainedError")) {
+      return "No microphone was found. Check that an input device is connected and selected.";
+    }
+    if (error.startsWith("NotReadableError")) {
+      return "The mic is busy in another app (Zoom, FaceTime, etc.). Close it and try again.";
+    }
+    return "Reload the page and try once more.";
   }
 
   function resetAll() {
@@ -187,10 +335,16 @@ export function VoiceCapture() {
   function handleOpenChange(next: boolean) {
     setOpen(next);
     if (!next) {
-      // Stop any in-flight recognition before tearing the dialog state down.
+      // Stop any in-flight capture before tearing the dialog state down.
       recognitionRef.current?.stop();
       recognitionRef.current = null;
+      mediaRecorderRef.current?.stop();
+      mediaRecorderRef.current = null;
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      chunksRef.current = [];
       setListening(false);
+      setTranscribing(false);
       resetAll();
     }
   }
@@ -287,24 +441,31 @@ export function VoiceCapture() {
   }
 
   /** Build a single-line draft straight from the transcript (no LLM). */
-  function buildManualDraft() {
-    const cur = baseCurrency;
+  function buildManualDraft(text: string) {
+    const clean = text.trim();
     setDirection("expense");
-    setMerchant(transcript.trim().slice(0, 80));
+    setMerchant(clean.slice(0, 80));
     setDate(todayIso());
-    setCurrency(cur);
+    setCurrency(baseCurrency);
     const seedAccount =
       defaultAccountId && selectable.some((a) => a.id === defaultAccountId)
         ? defaultAccountId
         : selectable[0]?.id ?? "";
     setAccountId(seedAccount);
-    setLines([{ key: keyGen(), description: transcript.trim(), categoryId: "", amount: "" }]);
+    setLines([{ key: keyGen(), description: clean, categoryId: "", amount: "" }]);
     setStage("review");
   }
 
+  /** Parse the given text into the review card. Called by the Parse button and
+   *  automatically right after a successful voice transcription. */
   async function handleParse() {
     const text = transcript.trim();
     if (!text) return toast.error("Say or type an expense first.");
+    await runParse(text);
+  }
+
+  async function runParse(text: string) {
+    if (!text.trim()) return;
     if (listening) stopListening();
     setParsing(true);
     setFallbackNote(false);
@@ -337,15 +498,15 @@ export function VoiceCapture() {
 
       if (data?.needsClientFallback) {
         setFallbackNote(true);
-        buildManualDraft();
+        buildManualDraft(text);
         return;
       }
 
       toast.error(data?.error ?? "Couldn't parse that. Review the fields manually.");
-      buildManualDraft();
+      buildManualDraft(text);
     } catch {
       setFallbackNote(true);
-      buildManualDraft();
+      buildManualDraft(text);
     } finally {
       setParsing(false);
     }
@@ -425,7 +586,7 @@ export function VoiceCapture() {
 
           {stage === "capture" ? (
             <div className="space-y-4">
-              {!speechSupported ? (
+              {!speechSupported && !transcribeAvailable ? (
                 <p className="rounded-lg border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
                   Voice input isn’t supported in this browser (try Chrome) — type
                   the sentence below.
@@ -433,20 +594,27 @@ export function VoiceCapture() {
               ) : micPermission === "denied" ? (
                 <div className="flex flex-col items-center gap-3 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-5 text-center">
                   <MicOff className="size-5 text-amber-600 dark:text-amber-400" />
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium">Microphone is blocked</p>
-                    <p className="text-xs text-muted-foreground">
-                      Click the lock / mic icon in your browser’s address bar and
-                      allow the microphone, then try again. On macOS also check
-                      System Settings → Privacy &amp; Security → Microphone.
+                  <div className="space-y-1.5">
+                    <p className="text-sm font-medium">
+                      {micError ? "Microphone unavailable" : "Microphone is blocked"}
                     </p>
+                    <p className="text-xs text-muted-foreground">
+                      {micError
+                        ? micErrorHint(micError)
+                        : "Click the lock / mic icon in your browser’s address bar and allow the microphone, then try again. On macOS also check System Settings → Privacy & Security → Microphone."}
+                    </p>
+                    {micError && (
+                      <p className="rounded-md bg-background/70 px-2 py-1 font-mono text-[11px] text-amber-700 dark:text-amber-400">
+                        {micError}
+                      </p>
+                    )}
                   </div>
                   <Button
                     type="button"
                     variant="outline"
                     size="sm"
                     className="gap-1.5"
-                    onClick={() => void startListening()}
+                    onClick={toggleMic}
                   >
                     <Mic className="size-4" />
                     Try again
@@ -459,18 +627,34 @@ export function VoiceCapture() {
                     variant={listening ? "destructive" : "default"}
                     size="icon-lg"
                     className="rounded-full"
-                    onClick={() => (listening ? stopListening() : void startListening())}
+                    onClick={toggleMic}
+                    disabled={transcribing}
                     aria-label={listening ? "Stop recording" : "Start recording"}
                   >
-                    {listening ? <Square className="size-4" /> : <Mic className="size-5" />}
+                    {transcribing ? (
+                      <Loader2 className="size-5 animate-spin" />
+                    ) : listening ? (
+                      <Square className="size-4" />
+                    ) : (
+                      <Mic className="size-5" />
+                    )}
                   </Button>
                   <span className="text-xs text-muted-foreground">
-                    {listening
-                      ? "Listening — tap to stop"
-                      : micPermission === "granted"
-                        ? "Tap to speak"
-                        : "Tap to speak — we’ll ask for mic access"}
+                    {transcribing
+                      ? "Transcribing…"
+                      : listening
+                        ? transcribeAvailable
+                          ? "Recording — tap to stop"
+                          : "Listening — tap to stop"
+                        : micPermission === "granted"
+                          ? "Tap to speak"
+                          : "Tap to speak — we’ll ask for mic access"}
                   </span>
+                  {transcribeAvailable && !listening && !transcribing && (
+                    <span className="text-[10px] uppercase tracking-widest text-muted-foreground/70">
+                      Powered by Whisper
+                    </span>
+                  )}
                 </div>
               )}
 
@@ -496,7 +680,7 @@ export function VoiceCapture() {
                 <Button
                   type="button"
                   onClick={handleParse}
-                  disabled={parsing || !transcript.trim()}
+                  disabled={parsing || transcribing || !transcript.trim()}
                   className="gap-1.5"
                 >
                   {parsing ? (

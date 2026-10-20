@@ -16,6 +16,7 @@ import type { Transaction } from "@/lib/data";
 import { formatMoney, formatFullDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useAppData } from "@/components/transactions/transactions-provider";
+import { RefundDialog } from "@/components/reimbursements/refund-dialog";
 
 export function TransactionDetailDialog({
   open,
@@ -31,9 +32,9 @@ export function TransactionDetailDialog({
     getCategory,
     openEditTransaction,
     deleteTransaction,
-    settleReimbursement,
   } = useAppData();
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [refundFor, setRefundFor] = useState<Transaction | null>(null);
 
   if (!transaction) return null;
   const t = transaction;
@@ -48,6 +49,8 @@ export function TransactionDetailDialog({
   }
 
   return (
+    <>
+    <RefundDialog claim={refundFor} onOpenChange={(o) => !o && setRefundFor(null)} />
     <Dialog
       open={open}
       onOpenChange={(o) => {
@@ -181,7 +184,7 @@ export function TransactionDetailDialog({
                 variant="outline"
                 className="gap-1.5"
                 onClick={() => {
-                  settleReimbursement(t.id);
+                  setRefundFor(t);
                   close();
                 }}
               >
@@ -226,6 +229,7 @@ export function TransactionDetailDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+    </>
   );
 }
 

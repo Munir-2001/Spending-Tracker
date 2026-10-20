@@ -67,18 +67,25 @@ export default function InsightsPage() {
 
   const now = useMemo(() => new Date(), []);
   const inPeriod = useMemo(() => {
+    // Compare on the stored date STRING's calendar parts — never parse it through
+    // `new Date()`, which reads yyyy-mm-dd as UTC midnight and then shifts the
+    // month/year back into local time (a timezone-sensitive boundary). This keeps
+    // the "this month" definition identical to the Transactions page.
+    const nowYear = now.getFullYear();
+    const nowMonth = now.getMonth(); // 0-11, local
     return (iso: string) => {
       if (period === "all") return true;
       if (period === "custom") {
         const day = iso.slice(0, 10);
         return day >= startDate && day <= endDate;
       }
-      const d = new Date(iso);
-      if (d.getFullYear() !== now.getFullYear()) return false;
+      const year = Number(iso.slice(0, 4));
+      const month = Number(iso.slice(5, 7)) - 1; // 0-11
+      if (year !== nowYear) return false;
       if (period === "year") return true;
       if (period === "quarter")
-        return Math.floor(d.getMonth() / 3) === Math.floor(now.getMonth() / 3);
-      return d.getMonth() === now.getMonth();
+        return Math.floor(month / 3) === Math.floor(nowMonth / 3);
+      return month === nowMonth;
     };
   }, [period, now, startDate, endDate]);
 

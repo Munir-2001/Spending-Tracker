@@ -34,11 +34,18 @@ export type JournalEntry = {
 export type LedgerLookups = {
   accounts: Map<string, Account>;
   categories: Map<string, Category>;
+  /** Transfer leg id → the asset it funded (e.g. a gold lot's "Paid from"
+   *  outflow → "Gold"). Unlisted transfer legs post against clearing. */
+  transferCounterparts?: Map<string, string>;
 };
+
+/** Holding account for transfer legs whose other side isn't known here. Both
+ *  legs of an account→account transfer hit it, so it nets to zero. */
+export const TRANSFER_CLEARING = "Transfers (clearing)";
 
 export function toJournalEntry(
   t: Transaction,
-  { accounts, categories }: LedgerLookups
+  { accounts, categories, transferCounterparts }: LedgerLookups
 ): JournalEntry {
   const amount = Math.abs(t.amount);
   const acc = accounts.get(t.accountId);
@@ -73,6 +80,20 @@ export function toJournalEntry(
       currency: cur,
     };
   };
+
+  // A transfer moves value between holdings — never income or expense. Post the
+  // other side to the asset it funded (Dr Gold / Cr Bank) or to clearing.
+  if (t.isTransfer) {
+    const other: JournalLine = {
+      account: transferCounterparts?.get(t.id) ?? TRANSFER_CLEARING,
+      classification: "Asset",
+      debit: isIncome ? 0 : amount,
+      credit: isIncome ? amount : 0,
+      currency: cur,
+    };
+    const lines = isIncome ? [moneyLine(amount, 0), other] : [other, moneyLine(0, amount)];
+    return { id: t.id, date: t.date, memo: t.merchant, currency: cur, lines };
+  }
 
   // One category line per item (split), or a single line for a simple txn.
   const parts =

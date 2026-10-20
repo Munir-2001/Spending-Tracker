@@ -1,17 +1,20 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { HandCoins, Check } from "lucide-react";
 
 import { Reveal } from "@/components/reveal";
 import { Button } from "@/components/ui/button";
 import { useAppData } from "@/components/transactions/transactions-provider";
+import { RefundDialog } from "@/components/reimbursements/refund-dialog";
+import type { Transaction } from "@/lib/data";
 import { pendingReceivablesBase } from "@/lib/compute";
 import { formatMoney, formatRelativeDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function ReimbursementsPage() {
-  const { items, getAccount, baseCurrency, fx, settleReimbursement } = useAppData();
+  const { items, getAccount, baseCurrency, fx } = useAppData();
+  const [refundFor, setRefundFor] = useState<Transaction | null>(null);
 
   const claims = useMemo(
     () => items.filter((t) => t.reimbursement),
@@ -24,6 +27,7 @@ export default function ReimbursementsPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-10 md:px-8 md:py-14">
+      <RefundDialog claim={refundFor} onOpenChange={(o) => !o && setRefundFor(null)} />
       <Reveal>
         <div className="flex flex-col gap-1.5">
           <h1 className="display text-3xl tracking-tight md:text-4xl">
@@ -87,7 +91,7 @@ export default function ReimbursementsPage() {
                         size="sm"
                         variant="outline"
                         className="gap-1.5"
-                        onClick={() => settleReimbursement(t.id)}
+                        onClick={() => setRefundFor(t)}
                       >
                         <Check className="size-4" />
                         Mark refunded

@@ -33,6 +33,32 @@ export function categoryLinesOf(
 }
 
 /**
+ * The part of a transaction that falls in `accepted` categories, or null if
+ * none does. A split bill is narrowed to its matching line items (amount and
+ * owed-back portion re-summed), so filtering by "Meat" counts the €2 of meat,
+ * not the whole €8 bill. Simple transactions are returned as-is. Never mutates.
+ */
+export function scopeToCategories(
+  t: Transaction,
+  accepted: ReadonlySet<string>
+): Transaction | null {
+  if (!t.items?.length) return accepted.has(t.categoryId) ? t : null;
+  const items = t.items.filter((i) => accepted.has(i.categoryId));
+  if (items.length === 0) return null;
+  if (items.length === t.items.length) return t;
+  const amount = items.reduce((s, i) => s + i.amount, 0);
+  const owed = items
+    .filter((i) => i.reimbursable)
+    .reduce((s, i) => s + Math.abs(i.amount), 0);
+  return {
+    ...t,
+    items,
+    amount,
+    ...(t.reimbursement && { reimbursement: { ...t.reimbursement, amount: owed } }),
+  };
+}
+
+/**
  * Balance of every account in its OWN currency: opening balance plus each
  * transaction, converted into the account's currency (a charge may be booked in
  * a different currency than the account holds). Group accounts are always 0.

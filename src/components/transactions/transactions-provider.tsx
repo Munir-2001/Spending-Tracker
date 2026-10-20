@@ -584,11 +584,25 @@ export function TransactionsProvider({
       .catch(() => toast.error("Couldn't save budget. Please try again."));
   }, []);
 
+  // A lot's "Paid from" outflow lives in the transaction list: swap in the new
+  // version and drop any removed one so account balances update immediately.
+  const applyFunding = useCallback(
+    (funding: Transaction | null, removedTxnId: string | null) => {
+      if (!funding && !removedTxnId) return;
+      setItems((prev) => {
+        const kept = prev.filter((t) => t.id !== removedTxnId && t.id !== funding?.id);
+        return (funding ? [funding, ...kept] : kept).sort(byDateDesc);
+      });
+    },
+    []
+  );
+
   const addAsset = useCallback(
     (input: NewAssetInput) => {
       createAssetAction(input)
-        .then(async (saved) => {
+        .then(async ({ asset: saved, funding }) => {
           setAssets((prev) => [...prev, saved]);
+          applyFunding(funding, null);
           // A new market holding (gold or crypto) also created its first lot
           // server-side — pull it in and price it live.
           if (saved.symbol) {
@@ -598,7 +612,7 @@ export function TransactionsProvider({
         })
         .catch(() => toast.error("Couldn't add asset. Please try again."));
     },
-    [refreshGold]
+    [refreshGold, applyFunding]
   );
 
   const saveAsset = useCallback((id: string, input: NewAssetInput) => {
@@ -623,37 +637,42 @@ export function TransactionsProvider({
   const addLot = useCallback(
     (input: NewAssetLotInput) => {
       createAssetLotAction(input)
-        .then((saved) => {
-          setLots((prev) => [...prev, saved]);
+        .then(({ lot, funding }) => {
+          setLots((prev) => [...prev, lot]);
+          applyFunding(funding, null);
           return refreshGold(true);
         })
         .catch(() => toast.error("Couldn't add purchase. Please try again."));
     },
-    [refreshGold]
+    [refreshGold, applyFunding]
   );
 
   const saveLot = useCallback(
     (id: string, input: NewAssetLotInput) => {
       updateAssetLotAction(id, input)
-        .then((saved) => {
-          if (saved) setLots((prev) => prev.map((l) => (l.id === id ? saved : l)));
+        .then((change) => {
+          if (change) {
+            setLots((prev) => prev.map((l) => (l.id === id ? change.lot : l)));
+            applyFunding(change.funding, change.removedTxnId);
+          }
           return refreshGold(true);
         })
         .catch(() => toast.error("Couldn't update purchase. Please try again."));
     },
-    [refreshGold]
+    [refreshGold, applyFunding]
   );
 
   const deleteLot = useCallback(
     (id: string) => {
       deleteAssetLotAction(id)
-        .then(() => {
+        .then(({ removedTxnId }) => {
           setLots((prev) => prev.filter((l) => l.id !== id));
+          applyFunding(null, removedTxnId);
           return refreshGold(true);
         })
         .catch(() => toast.error("Couldn't delete purchase. Please try again."));
     },
-    [refreshGold]
+    [refreshGold, applyFunding]
   );
 
   const setAssetOpen = useCallback((open: boolean) => {

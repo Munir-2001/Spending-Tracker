@@ -244,6 +244,9 @@ export type AssetLotRow = {
   // USD value of 1 unit of `currency` at purchase; null → use current rate.
   purchase_fx_rate: number | null;
   note: string | null; // encrypted at rest
+  // "Paid from": the is_transfer outflow on the paying account (see 0023).
+  // Optional on write (column defaults NULL).
+  funding_txn_id?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -531,6 +534,8 @@ export type NewAssetInput = {
     goldCost: number; // minor units of `currency`
     commission: number;
     tax: number;
+    /** Account that paid for it; null/absent = not linked to an account. */
+    fundingAccountId?: string | null;
   };
 };
 
@@ -546,6 +551,8 @@ export type NewAssetLotInput = {
   tax: number;
   currency: string;
   note?: string | null;
+  /** Account that paid for this purchase; null/absent = not linked to an account. */
+  fundingAccountId?: string | null;
 };
 
 /** Input for creating/editing a category (UI-facing, camelCase). */

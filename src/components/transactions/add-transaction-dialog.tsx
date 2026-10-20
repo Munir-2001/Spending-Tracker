@@ -33,6 +33,7 @@ import {
 } from "@/lib/currency";
 import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { isLotPriced } from "@/lib/asset-funding";
 import type { NewTransaction } from "@/components/transactions/transactions-provider";
 
 type Kind = "expense" | "income" | "transfer";
@@ -258,13 +259,16 @@ export function AddTransactionDialog({
       ? assets.find((a) => a.id === fromId)?.currency
       : accountsById.get(fromId)?.currency;
   // Possible transfer destinations: everything except the chosen source.
+  // Gold/crypto are valued from their purchase lots, so money can't be moved
+  // into them here — it would be overwritten on the next price refresh. Those
+  // buys go through the asset's "Add purchase" with "Paid from" instead.
   const toOptions = useMemo(
     () => [
       ...selectable
         .filter((a) => `acc:${a.id}` !== fromTarget)
         .map((a) => ({ value: `acc:${a.id}`, label: a.name, sub: a.currency })),
       ...assets
-        .filter((a) => `ast:${a.id}` !== fromTarget)
+        .filter((a) => `ast:${a.id}` !== fromTarget && !isLotPriced(a.type))
         .map((a) => ({
           value: `ast:${a.id}`,
           label: a.name,
@@ -585,6 +589,8 @@ export function AddTransactionDialog({
                 )}
                 <p className="text-[11px] text-muted-foreground">
                   Moves money between holdings — not counted as income or spending.
+                  {assets.some((a) => isLotPriced(a.type)) &&
+                    " Buying gold or crypto? Use Add purchase on the asset and pick Paid from."}
                 </p>
               </div>
             )}

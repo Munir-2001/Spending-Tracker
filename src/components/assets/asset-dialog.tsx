@@ -25,6 +25,11 @@ import {
 import type { Asset } from "@/lib/data";
 import type { AssetType, NewAssetInput } from "@/lib/schema";
 import {
+  NOT_LINKED,
+  PaidFromField,
+  paidFromAccountId,
+} from "@/components/assets/paid-from-field";
+import {
   CURRENCIES,
   currencyInfo,
   toMajorUnits,
@@ -76,6 +81,7 @@ export function AssetDialog({
   const [commission, setCommission] = useState("");
   const [tax, setTax] = useState("");
   const [lotDate, setLotDate] = useState("");
+  const [paidFrom, setPaidFrom] = useState(NOT_LINKED);
   const [coinId, setCoinId] = useState("");
   const [coinSearch, setCoinSearch] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -100,6 +106,7 @@ export function AssetDialog({
       setCommission("");
       setTax("");
       setLotDate(todayIso());
+      setPaidFrom(NOT_LINKED);
       setCoinId(editing.type === "crypto" ? editing.symbol ?? "" : "");
       setCoinSearch("");
     } else {
@@ -114,6 +121,7 @@ export function AssetDialog({
       setCommission("");
       setTax("");
       setLotDate(todayIso());
+      setPaidFrom(NOT_LINKED);
       setCoinId("");
       setCoinSearch("");
     }
@@ -182,6 +190,7 @@ export function AssetDialog({
           goldCost: goldCostMinor,
           commission: commissionMinor,
           tax: taxMinor,
+          fundingAccountId: paidFromAccountId(paidFrom),
         },
       });
       toast.success("Gold added", {
@@ -241,6 +250,7 @@ export function AssetDialog({
           goldCost: coinCostMinor,
           commission: feeMinor,
           tax: taxMinor,
+          fundingAccountId: paidFromAccountId(paidFrom),
         },
       });
       toast.success("Crypto added", { description: "Prices refresh automatically." });
@@ -534,6 +544,12 @@ export function AssetDialog({
                       </p>
                     )}
                   </div>
+                  <PaidFromField
+                    value={paidFrom}
+                    onChange={setPaidFrom}
+                    costMinor={toMinorUnits(totalCost, currency)}
+                    currency={currency}
+                  />
                 </>
               )}
             </>
@@ -718,6 +734,12 @@ export function AssetDialog({
                       </p>
                     )}
                   </div>
+                  <PaidFromField
+                    value={paidFrom}
+                    onChange={setPaidFrom}
+                    costMinor={toMinorUnits(totalCost, currency)}
+                    currency={currency}
+                  />
                 </>
               )}
             </>

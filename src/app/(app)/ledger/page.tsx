@@ -10,14 +10,23 @@ import { formatMoney, formatFullDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 export default function LedgerPage() {
-  const { items, accounts, categories, baseCurrency, fx } = useAppData();
+  const { items, accounts, categories, assets, lots, baseCurrency, fx } = useAppData();
   const entries = useMemo(() => {
+    // A purchase's "Paid from" outflow debits the holding it bought.
+    const assetName = new Map(assets.map((a) => [a.id, a.name]));
+    const transferCounterparts = new Map(
+      lots.flatMap((l) => {
+        const name = assetName.get(l.assetId);
+        return l.fundingTxnId && name ? [[l.fundingTxnId, name] as const] : [];
+      })
+    );
     const lookups = {
       accounts: new Map(accounts.map((a) => [a.id, a])),
       categories: new Map(categories.map((c) => [c.id, c])),
+      transferCounterparts,
     };
     return journalFrom(items, lookups);
-  }, [items, accounts, categories]);
+  }, [items, accounts, categories, assets, lots]);
   const totals = useMemo(() => journalTotals(entries, fx), [entries, fx]);
 
   return (

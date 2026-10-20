@@ -87,6 +87,7 @@ import { invoiceTotals, lineAmount, normalizeInvoicePrefs } from "@/lib/invoice"
 import { keepIfEmpty } from "@/lib/patch";
 import { entitlementFrom, type Entitlement } from "@/lib/entitlement";
 import { goldValueMajor, gramsOf, GRAMS_PER_UNIT } from "@/lib/gold";
+import { fundingOutflow, isLotPriced } from "@/lib/asset-funding";
 import {
   getUsdGoldQuote,
   getUsdSilverQuote,
@@ -231,7 +232,11 @@ export async function listAssets(): Promise<Asset[]> {
   return rows.map(assetToUi);
 }
 
-export async function createAsset(raw: NewAssetInput): Promise<Asset> {
+/** A new asset plus, for a gold/crypto first purchase with "Paid from", the
+ *  outflow posted on the paying account. */
+export async function createAsset(
+  raw: NewAssetInput
+): Promise<{ asset: Asset; funding: Transaction | null }> {
   const input = v.assetInput.parse(raw) as NewAssetInput;
   const userId = await getUserId();
   const now = new Date().toISOString();
@@ -249,6 +254,7 @@ export async function createAsset(raw: NewAssetInput): Promise<Asset> {
     updated_at: now,
   };
   await db.insert("assets", row);
+  let funding: Transaction | null = null;
   // For a market-priced holding (gold or crypto), record the opening purchase as
   // its first lot so the asset never exists without a lot backing its cost basis.
   if (input.symbol && input.firstLot && input.quantity) {
@@ -274,9 +280,15 @@ export async function createAsset(raw: NewAssetInput): Promise<Asset> {
       updated_at: now,
     };
     await db.insert("asset_lots", lot);
+    const sync = await syncLotFunding(lot, fl.fundingAccountId ?? null);
+    if (sync.fundingTxnId) {
+      await updateOwned("asset_lots", lot.id, { funding_txn_id: sync.fundingTxnId });
+      funding = sync.funding;
+      revalidateTxnViews();
+    }
   }
   revalidateAssetViews();
-  return assetToUi(row);
+  return { asset: assetToUi(row), funding };
 }
 
 export async function updateAsset(
@@ -405,7 +417,85 @@ function lotToUi(r: AssetLotRow): AssetLot {
     currency: r.currency,
     purchaseFxRate: r.purchase_fx_rate ?? null,
     note: dec(r.note),
+    fundingTxnId: r.funding_txn_id ?? null,
   };
+}
+
+/** A lot mutation plus what changed on the paying account's side, so the client
+ *  can update both the holding and the bank balance without a reload. */
+export type LotChange = {
+  lot: AssetLot;
+  funding: Transaction | null; // the linked outflow as it now stands
+  removedTxnId: string | null; // an outflow that was deleted (unlinked / lot removed)
+};
+
+/**
+ * Keep a lot's "Paid from" outflow in step with the lot. Buying an asset from a
+ * bank account is an asset swap (Dr Asset / Cr Bank), so the outflow is flagged
+ * is_transfer: it moves the balance but never counts as spending. With no
+ * account, any existing outflow is removed. Returns the row to write back on the
+ * lot (`funding_txn_id`) alongside the client-facing change.
+ */
+async function syncLotFunding(
+  lot: AssetLotRow,
+  fundingAccountId: string | null
+): Promise<{ fundingTxnId: string | null; funding: Transaction | null; removedTxnId: string | null }> {
+  const existing = lot.funding_txn_id
+    ? await db.findById("transactions", lot.funding_txn_id)
+    : null;
+
+  if (!fundingAccountId) {
+    if (existing) await removeOwned("transactions", existing.id);
+    return { fundingTxnId: null, funding: null, removedTxnId: existing?.id ?? null };
+  }
+
+  // RLS-scoped read: only the caller's own account can pay for their lot.
+  const account = await db.findById("accounts", fundingAccountId);
+  if (!account || account.is_group) throw new Error("Paying account not found");
+  const [asset, { rates }] = await Promise.all([
+    db.findById("assets", lot.asset_id),
+    getSettings(),
+  ]);
+  const { amount, currency } = fundingOutflow(
+    { costBasis: lot.cost_basis, currency: lot.currency },
+    account.currency,
+    rates
+  );
+  const now = new Date().toISOString();
+  const fields = {
+    account_id: account.id,
+    date: lot.date,
+    description: enc(`Bought ${dec(asset?.name) ?? "asset"}`)!,
+    amount,
+    currency,
+    updated_at: now,
+  };
+
+  if (existing) {
+    const updated = await updateOwned("transactions", existing.id, fields);
+    return {
+      fundingTxnId: existing.id,
+      funding: updated ? transactionToUi(updated) : null,
+      removedTxnId: null,
+    };
+  }
+
+  const row: TransactionRow = {
+    id: randomUUID(),
+    user_id: lot.user_id,
+    org_id: null,
+    category_id: null,
+    status: "posted",
+    source: "manual",
+    external_id: null,
+    notes: null,
+    ...noReimburse,
+    is_transfer: true,
+    created_at: now,
+    ...fields,
+  };
+  await db.insert("transactions", row);
+  return { fundingTxnId: row.id, funding: transactionToUi(row), removedTxnId: null };
 }
 
 /**
@@ -507,7 +597,7 @@ async function recomputeAssetFromLots(assetId: string): Promise<void> {
   });
 }
 
-export async function createAssetLot(raw: NewAssetLotInput): Promise<AssetLot> {
+export async function createAssetLot(raw: NewAssetLotInput): Promise<LotChange> {
   const input = v.assetLotInput.parse(raw) as NewAssetLotInput;
   const userId = await getUserId();
   // Confirm the parent asset is the caller's own (RLS-scoped read) so a lot
@@ -537,15 +627,20 @@ export async function createAssetLot(raw: NewAssetLotInput): Promise<AssetLot> {
     updated_at: now,
   };
   await db.insert("asset_lots", row);
+  const sync = await syncLotFunding(row, input.fundingAccountId ?? null);
+  const saved = sync.fundingTxnId
+    ? ((await updateOwned("asset_lots", row.id, { funding_txn_id: sync.fundingTxnId })) ?? row)
+    : row;
   await recomputeAssetFromLots(input.assetId);
   revalidateAssetViews();
-  return lotToUi(row);
+  if (sync.funding) revalidateTxnViews();
+  return { lot: lotToUi(saved), funding: sync.funding, removedTxnId: null };
 }
 
 export async function updateAssetLot(
   id: string,
   raw: NewAssetLotInput
-): Promise<AssetLot | null> {
+): Promise<LotChange | null> {
   const input = v.assetLotInput.parse(raw) as NewAssetLotInput;
   v.idInput.parse(id);
   const updated = await updateOwned("asset_lots", id, {
@@ -561,17 +656,29 @@ export async function updateAssetLot(
     updated_at: new Date().toISOString(),
     ...keepIfEmpty({ note: enc(input.note ?? null) }),
   });
-  if (updated) await recomputeAssetFromLots(updated.asset_id);
+  if (!updated) return null;
+  const sync = await syncLotFunding(updated, input.fundingAccountId ?? null);
+  const saved =
+    sync.fundingTxnId !== (updated.funding_txn_id ?? null)
+      ? ((await updateOwned("asset_lots", id, { funding_txn_id: sync.fundingTxnId })) ?? updated)
+      : updated;
+  await recomputeAssetFromLots(updated.asset_id);
   revalidateAssetViews();
-  return updated ? lotToUi(updated) : null;
+  revalidateTxnViews();
+  return { lot: lotToUi(saved), funding: sync.funding, removedTxnId: sync.removedTxnId };
 }
 
-export async function deleteAssetLot(id: string): Promise<void> {
+/** Delete a purchase lot and its "Paid from" outflow. Returns the removed
+ *  outflow's id (if any) so the client can drop it too. */
+export async function deleteAssetLot(id: string): Promise<{ removedTxnId: string | null }> {
   v.idInput.parse(id);
   const existing = await db.findById("asset_lots", id);
+  const sync = existing ? await syncLotFunding(existing, null) : null;
   await removeOwned("asset_lots", id);
   if (existing) await recomputeAssetFromLots(existing.asset_id);
   revalidateAssetViews();
+  if (sync?.removedTxnId) revalidateTxnViews();
+  return { removedTxnId: sync?.removedTxnId ?? null };
 }
 
 function revalidateCategoryViews() {
@@ -1030,6 +1137,8 @@ export async function recordTransfer(
     input.toKind === "account" ? await db.findById("accounts", input.toId) : null;
   const toAssetRow =
     input.toKind === "asset" ? await db.findById("assets", input.toId) : null;
+  if (toAssetRow && isLotPriced(toAssetRow.type))
+    throw new Error("Record gold/crypto buys as a purchase with “Paid from”, not a transfer.");
 
   const fromCur = (fromAccount?.currency ?? fromAssetRow?.currency) ?? "USD";
   const fromName = dec(fromAccount?.name ?? fromAssetRow?.name) ?? input.fromKind;

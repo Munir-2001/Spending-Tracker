@@ -29,7 +29,8 @@ import {
 import { Reveal } from "@/components/reveal";
 import { useAppData } from "@/components/transactions/transactions-provider";
 import { useConfirm } from "@/components/ui/confirm-dialog";
-import { flowsOf } from "@/lib/compute";
+import { flowsOf, scopeToCategories } from "@/lib/compute";
+import type { Transaction } from "@/lib/data";
 import { formatFullDate, formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -135,24 +136,24 @@ export default function TransactionsPage() {
     const q = query.trim().toLowerCase();
     const custom = period === "custom";
     const [start, end] = custom ? [from || null, to || null] : periodBounds(period);
-    return items.filter((t) => {
+    const out: Transaction[] = [];
+    for (const t of items) {
       // Time period (string compare on yyyy-mm-dd). Presets use an exclusive end;
       // a custom range is inclusive of both the From and To dates.
-      if (start && t.date < start) return false;
-      if (end && (custom ? t.date > end : t.date >= end)) return false;
-      // Category — for a split, match if ANY line falls in the accepted set,
-      // so e.g. a grocery split still shows under "Groceries".
-      if (acceptedCats) {
-        const inCat = t.items?.length
-          ? t.items.some((i) => acceptedCats.has(i.categoryId))
-          : acceptedCats.has(t.categoryId);
-        if (!inCat) return false;
-      }
-      if (account !== "all" && t.accountId !== account) return false;
-      if (q && !t.merchant.toLowerCase().includes(q)) return false;
-      return true;
-    });
+      if (start && t.date < start) continue;
+      if (end && (custom ? t.date > end : t.date >= end)) continue;
+      if (account !== "all" && t.accountId !== account) continue;
+      if (q && !t.merchant.toLowerCase().includes(q)) continue;
+      // Category — a split is narrowed to its matching lines, so filtering by
+      // "Meat" shows (and totals) the €2 of meat, not the whole €8 bill.
+      const scoped = acceptedCats ? scopeToCategories(t, acceptedCats) : t;
+      if (scoped) out.push(scoped);
+    }
+    return out;
   }, [items, query, acceptedCats, account, period, from, to]);
+
+  // Detail / edit / delete always act on the full transaction, not a filtered slice.
+  const originalById = useMemo(() => new Map(items.map((t) => [t.id, t])), [items]);
 
   // Mixed currencies → roll the summary up to the base currency. True-spending
   // semantics (transfers / reimbursement settlements excluded, owed portions
@@ -324,6 +325,8 @@ export default function TransactionsPage() {
             </TableHeader>
             <TableBody>
               {filtered.map((t) => {
+                const original = originalById.get(t.id) ?? t;
+                const isPartial = original.amount !== t.amount;
                 const cat = getCategory(t.categoryId);
                 const acc = getAccount(t.accountId);
                 const isIncome = t.amount > 0;
@@ -331,7 +334,7 @@ export default function TransactionsPage() {
                   <TableRow
                     key={t.id}
                     className="group cursor-pointer"
-                    onClick={() => openTransactionDetail(t)}
+                    onClick={() => openTransactionDetail(original)}
                   >
                     <TableCell className="num whitespace-nowrap pl-5 text-xs text-muted-foreground">
                       {formatFullDate(t.date)}
@@ -351,7 +354,7 @@ export default function TransactionsPage() {
                         </span>
                       ) : t.items?.length ? (
                         <span className="inline-flex items-center gap-1.5 rounded bg-muted px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
-                          Split · {t.items.length}
+                          Split · {original.items?.length ?? t.items.length}
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -373,6 +376,11 @@ export default function TransactionsPage() {
                       )}
                     >
                       {formatMoney(t.amount, { signed: isIncome, currency: t.currency })}
+                      {isPartial && (
+                        <span className="block text-[11px] font-normal text-muted-foreground">
+                          of {formatMoney(original.amount, { currency: t.currency })}
+                        </span>
+                      )}
                     </TableCell>
                     <TableCell
                       className="pr-3 text-right"
@@ -390,7 +398,7 @@ export default function TransactionsPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => openEditTransaction(t)}>
+                          <DropdownMenuItem onClick={() => openEditTransaction(original)}>
                             <Pencil className="size-4" />
                             Edit
                           </DropdownMenuItem>

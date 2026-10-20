@@ -26,6 +26,12 @@ import type { Asset, AssetLot } from "@/lib/data";
 import type { NewAssetLotInput } from "@/lib/schema";
 import { currencyInfo, toMajorUnits, toMinorUnits } from "@/lib/currency";
 import { coinById } from "@/lib/coins";
+import { useAppData } from "@/components/transactions/transactions-provider";
+import {
+  NOT_LINKED,
+  PaidFromField,
+  paidFromAccountId,
+} from "@/components/assets/paid-from-field";
 
 const KARATS = [24, 22, 21, 18];
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -59,7 +65,14 @@ export function LotDialog({
   const [commission, setCommission] = useState("");
   const [tax, setTax] = useState("");
   const [note, setNote] = useState("");
+  const [paidFrom, setPaidFrom] = useState(NOT_LINKED);
   const [confirmDelete, setConfirmDelete] = useState(false);
+
+  const { items } = useAppData();
+  // The account an existing lot was paid from, via its linked outflow.
+  const linkedAccountId = editing?.fundingTxnId
+    ? items.find((t) => t.id === editing.fundingTxnId)?.accountId ?? null
+    : null;
 
   useEffect(() => {
     if (!open) return;
@@ -74,6 +87,7 @@ export function LotDialog({
       );
       setTax(editing.tax ? String(toMajorUnits(editing.tax, editing.currency)) : "");
       setNote(editing.note ?? "");
+      setPaidFrom(linkedAccountId ?? NOT_LINKED);
     } else {
       setDate(todayIso());
       setQuantity("");
@@ -82,8 +96,9 @@ export function LotDialog({
       setCommission("");
       setTax("");
       setNote("");
+      setPaidFrom(NOT_LINKED);
     }
-  }, [open, editing, asset]);
+  }, [open, editing, asset]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sym = currencyInfo(currency).symbol;
   const qtyNum = Number.parseFloat(quantity) || 0;
@@ -116,6 +131,7 @@ export function LotDialog({
       tax: toMinorUnits(tx, currency),
       currency,
       note: note.trim() || null,
+      fundingAccountId: paidFromAccountId(paidFrom),
     };
     if (editing) {
       onSave(editing.id, input);
@@ -285,6 +301,13 @@ export function LotDialog({
               </p>
             )}
           </div>
+
+          <PaidFromField
+            value={paidFrom}
+            onChange={setPaidFrom}
+            costMinor={toMinorUnits(total, currency)}
+            currency={currency}
+          />
 
           <div className="space-y-1.5">
             <Label htmlFor="lot-note">Note (optional)</Label>

@@ -53,6 +53,8 @@ export type AssetLot = {
   currency: string;
   purchaseFxRate: number | null; // USD value of 1 unit of `currency` at purchase
   note: string | null;
+  /** The outflow transaction on the account that paid for this lot, if any. */
+  fundingTxnId: string | null;
 };
 
 export type Account = {

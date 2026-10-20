@@ -120,6 +120,7 @@ export const assetInput = z.object({
       goldCost: intAmount.nonnegative(),
       commission: intAmount.nonnegative(),
       tax: intAmount.nonnegative(),
+      fundingAccountId: idStr.nullable().optional(),
     })
     .optional(),
 });
@@ -140,6 +141,7 @@ export const assetLotInput = z.object({
   tax: intAmount.nonnegative(),
   currency,
   note: z.string().trim().max(500).nullable().optional(),
+  fundingAccountId: idStr.nullable().optional(),
 });
 
 export const categoryInput = z.object({

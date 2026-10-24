@@ -23,7 +23,7 @@ import { InvoiceDocument } from "@/components/invoices/invoice-document";
 import type { Invoice, InvoiceLine } from "@/lib/data";
 import type { NewInvoiceInput, NewInvoiceLine, InvoiceFieldPrefs } from "@/lib/schema";
 import { CURRENCIES, currencyInfo, toMajorUnits, toMinorUnits } from "@/lib/currency";
-import { invoiceTotals } from "@/lib/invoice";
+import { invoiceLabel, invoiceTotals, isDraftNumber } from "@/lib/invoice";
 
 type LineDraft = {
   description: string;
@@ -93,6 +93,10 @@ export function InvoiceBuilder({ editing }: { editing: Invoice | null }) {
       : ""
   );
   const [notes, setNotes] = useState(editing?.notes ?? "");
+  // Optional one-off number; blank = auto-numbered (INV-0001…) when sent.
+  const [customNumber, setCustomNumber] = useState(
+    editing && !isDraftNumber(editing.number) ? editing.number : ""
+  );
   const [terms, setTerms] = useState(editing?.terms ?? "");
   const [lines, setLines] = useState<LineDraft[]>(
     editing?.lines?.length
@@ -155,7 +159,7 @@ export function InvoiceBuilder({ editing }: { editing: Invoice | null }) {
   const preview: Invoice = {
     id: editing?.id ?? "preview",
     clientId,
-    number: editing?.number ?? "INV-—",
+    number: customNumber.trim() || (editing?.number ?? "INV-—"),
     status: editing?.status ?? "draft",
     overdue: editing?.overdue ?? false,
     issueDate,
@@ -226,6 +230,7 @@ export function InvoiceBuilder({ editing }: { editing: Invoice | null }) {
       notes: notes.trim() || null,
       terms: terms.trim() || null,
       fieldPrefs: prefs,
+      number: customNumber.trim() || null,
       lines: cleaned,
     };
 
@@ -260,7 +265,7 @@ export function InvoiceBuilder({ editing }: { editing: Invoice | null }) {
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="size-4" />
-          {editing ? editing.number : "Invoices"}
+          {editing ? invoiceLabel(editing) : "Invoices"}
         </Link>
         <div className="flex items-center gap-2">
           <Button
@@ -278,7 +283,7 @@ export function InvoiceBuilder({ editing }: { editing: Invoice | null }) {
       </div>
 
       <h1 className="display mt-4 text-2xl tracking-tight md:text-3xl">
-        {isEditing ? `Edit ${editing?.number}` : "New invoice"}
+        {isEditing && editing ? `Edit ${invoiceLabel(editing)}` : "New invoice"}
       </h1>
 
       <div className="mt-6 grid gap-8 lg:grid-cols-2">
@@ -325,6 +330,21 @@ export function InvoiceBuilder({ editing }: { editing: Invoice | null }) {
                 </SelectContent>
               </Select>
             </div>
+          </div>
+
+          {/* Number (optional one-off) */}
+          <div className="space-y-1.5">
+            <Label htmlFor="inv-number">Invoice number (optional)</Label>
+            <Input
+              id="inv-number"
+              value={customNumber}
+              onChange={(e) => setCustomNumber(e.target.value)}
+              placeholder="Assigned automatically when sent"
+              maxLength={32}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Shown on the invoice once it&apos;s sent. Leave blank for the next number in sequence.
+            </p>
           </div>
 
           {/* Dates */}

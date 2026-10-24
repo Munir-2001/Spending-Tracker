@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, Pencil, Send, Undo2, CreditCard, Ban, Download, Link2 } from "lucide-react";
+import { ArrowLeft, Pencil, Send, Undo2, CreditCard, Ban, Download, Link2, Hash } from "lucide-react";
 import { toast } from "sonner";
 
 import { Reveal } from "@/components/reveal";
@@ -12,8 +12,10 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useInvoices } from "@/components/invoices/invoices-provider";
 import { InvoiceDocument } from "@/components/invoices/invoice-document";
+import { RenameNumberDialog } from "@/components/invoices/rename-number-dialog";
 import { getInvoice } from "@/server/actions";
 import type { Invoice } from "@/lib/data";
+import { invoiceLabel, isDraftNumber } from "@/lib/invoice";
 
 export default function InvoiceDetailPage() {
   const params = useParams<{ id: string }>();
@@ -21,6 +23,7 @@ export default function InvoiceDetailPage() {
   const { invoices, getClient, openPayment, send, unsend, voidOne } =
     useInvoices();
   const confirm = useConfirm();
+  const [renameOpen, setRenameOpen] = useState(false);
 
   const listInvoice = invoices.find((i) => i.id === id);
   const [fetched, setFetched] = useState<Invoice | null>(null);
@@ -81,7 +84,7 @@ export default function InvoiceDetailPage() {
   async function onVoid() {
     if (!invoice) return;
     const ok = await confirm({
-      title: `Void ${invoice.number}?`,
+      title: `Void ${invoiceLabel(invoice)}?`,
       description: "A voided invoice can't be paid or edited.",
       confirmText: "Void invoice",
       tone: "warning",
@@ -163,6 +166,15 @@ export default function InvoiceDetailPage() {
                 Copy link
               </Button>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => setRenameOpen(true)}
+            >
+              <Hash className="size-4" />
+              {isDraft && isDraftNumber(invoice.number) ? "Set number" : "Rename number"}
+            </Button>
             <Button asChild variant="outline" size="sm" className="gap-1.5">
               <a
                 href={`/api/invoices/${invoice.id}/pdf`}
@@ -187,6 +199,12 @@ export default function InvoiceDetailPage() {
           </div>
         </div>
       </Reveal>
+
+      <RenameNumberDialog
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        invoice={invoice}
+      />
 
       <Reveal delay={0.05}>
         <div className="mt-6">

@@ -25,7 +25,7 @@ import { useAppData } from "@/components/transactions/transactions-provider";
 import type { Invoice } from "@/lib/data";
 import type { InvoicePaymentInput } from "@/lib/schema";
 import { currencyInfo, toMajorUnits, toMinorUnits } from "@/lib/currency";
-import { amountDue } from "@/lib/invoice";
+import { amountDue, invoiceLabel } from "@/lib/invoice";
 import { formatMoney } from "@/lib/format";
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -88,7 +88,7 @@ export function PaymentDialog({
           <DialogTitle className="display text-xl">Record payment</DialogTitle>
           <DialogDescription>
             {invoice
-              ? `${invoice.number} · ${formatMoney(due, {
+              ? `${invoiceLabel(invoice)} · ${formatMoney(due, {
                   currency: invoice.currency,
                 })} due. This posts income to the chosen account.`
               : ""}

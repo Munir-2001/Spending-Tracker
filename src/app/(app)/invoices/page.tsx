@@ -16,7 +16,7 @@ import { useAppData } from "@/components/transactions/transactions-provider";
 import { useInvoices } from "@/components/invoices/invoices-provider";
 import { StatusBadge } from "@/components/invoices/status-badge";
 import type { Invoice } from "@/lib/data";
-import { amountDue } from "@/lib/invoice";
+import { amountDue, invoiceLabel } from "@/lib/invoice";
 import { formatMoney, formatDate } from "@/lib/format";
 
 type Filter = "all" | "outstanding" | "draft" | "paid" | "overdue";
@@ -182,7 +182,7 @@ function InvoiceRow({
 
   async function onDelete() {
     const ok = await confirm({
-      title: `Delete ${invoice.number}?`,
+      title: `Delete ${invoiceLabel(invoice)}?`,
       description: "Draft invoices are removed permanently.",
       confirmText: "Delete",
       tone: "danger",
@@ -199,7 +199,7 @@ function InvoiceRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <p className="truncate text-sm font-medium leading-tight">
-              {invoice.number}
+              {invoiceLabel(invoice)}
             </p>
             <StatusBadge status={invoice.status} overdue={invoice.overdue} />
           </div>
@@ -217,7 +217,7 @@ function InvoiceRow({
         <RowMenu
           onEdit={() => router.push(`/invoices/${invoice.id}/edit`)}
           onDelete={onDelete}
-          label={`Actions for ${invoice.number}`}
+          label={`Actions for ${invoiceLabel(invoice)}`}
         />
       ) : (
         <span className="inline-block w-8 shrink-0" />

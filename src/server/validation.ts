@@ -272,6 +272,13 @@ export const invoiceInput = z.object({
   notes: z.string().trim().max(2000).nullable().optional(),
   terms: z.string().trim().max(2000).nullable().optional(),
   fieldPrefs: invoiceFieldPrefs.optional(),
+  number: z
+    .string()
+    .trim()
+    .max(32)
+    .refine((s) => !/^draft-/i.test(s), "That number is reserved")
+    .nullable()
+    .optional(),
   lines: z.array(invoiceLineInput).min(1).max(200),
 });
 

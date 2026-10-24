@@ -83,7 +83,15 @@ import type {
 } from "@/lib/data";
 import { DEFAULT_BASE_CURRENCY, DEFAULT_RATES, toMinorUnits } from "@/lib/currency";
 import { partialSale } from "@/lib/compute";
-import { invoiceTotals, lineAmount, normalizeInvoicePrefs } from "@/lib/invoice";
+import {
+  cleanInvoiceNumber,
+  draftNumber,
+  invoiceTotals,
+  isDraftNumber,
+  lineAmount,
+  nextIssuedNumber,
+  normalizeInvoicePrefs,
+} from "@/lib/invoice";
 import { keepIfEmpty } from "@/lib/patch";
 import { entitlementFrom, type Entitlement } from "@/lib/entitlement";
 import { goldValueMajor, gramsOf, GRAMS_PER_UNIT } from "@/lib/gold";
@@ -2018,15 +2026,25 @@ function revalidateInvoiceViews() {
   revalidatePath("/clients");
 }
 
-/** Next gap-free invoice number for this user, formatted INV-%04d. */
+/** Next issued invoice number for this user (INV-%04d), skipping drafts. */
 async function nextInvoiceNumber(): Promise<string> {
   const rows = (await db.selectAll("invoices")) as InvoiceRow[];
-  let max = 0;
-  for (const r of rows) {
-    const m = /(\d+)\s*$/.exec(r.number ?? "");
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  }
-  return `INV-${String(max + 1).padStart(4, "0")}`;
+  return nextIssuedNumber(rows.map((r) => r.number));
+}
+
+/** Reject a custom number another of the user's invoices already uses. */
+async function assertNumberFree(number: string, exceptId: string | null): Promise<void> {
+  const rows = (await db.selectAll("invoices")) as InvoiceRow[];
+  const taken = rows.some(
+    (r) => r.id !== exceptId && r.number.trim().toLowerCase() === number.toLowerCase()
+  );
+  if (taken) throw new Error(`Invoice number “${number}” is already used`);
+}
+
+/** An invoice leaving draft (sent or paid) gets its real number now, unless it
+ *  already has one (custom, or issued on an earlier send). */
+async function issuedNumberFor(row: InvoiceRow): Promise<string> {
+  return isDraftNumber(row.number) ? nextInvoiceNumber() : row.number;
 }
 
 /**
@@ -2252,12 +2270,15 @@ export async function createInvoice(raw: NewInvoiceInput): Promise<Invoice> {
   const lines = applyPrefsToLines(input.lines, prefs);
   const discount = prefs.discount ? (input.discountTotal ?? 0) : 0;
   const { subtotal, taxTotal, total } = invoiceTotals(lines, discount);
+  const custom = input.number?.trim() || null;
+  if (custom) await assertNumberFree(custom, null);
   const row: InvoiceRow = {
     id,
     user_id: userId,
     org_id: null,
     client_id: input.clientId,
-    number: await nextInvoiceNumber(),
+    // Real numbers are issued on send; a draft holds a unique placeholder.
+    number: custom ?? draftNumber(id),
     status: "draft",
     issue_date: input.issueDate,
     due_date: input.dueDate,
@@ -2302,7 +2323,10 @@ export async function updateInvoice(
   const lines = applyPrefsToLines(input.lines, prefs);
   const discount = prefs.discount ? (input.discountTotal ?? 0) : 0;
   const { subtotal, taxTotal, total } = invoiceTotals(lines, discount);
+  const custom = input.number?.trim() || null;
+  if (custom && custom !== existing.number) await assertNumberFree(custom, id);
   const updated = await updateOwned("invoices", id, {
+    ...(custom ? { number: custom } : {}),
     client_id: input.clientId,
     issue_date: input.issueDate,
     due_date: input.dueDate,
@@ -2346,11 +2370,48 @@ export async function deleteInvoice(id: string): Promise<boolean> {
   return ok;
 }
 
+/**
+ * Rename an invoice's number at any status (e.g. fix a typo after sending).
+ * The share link and PDF pick it up immediately; payment memos that quote the
+ * old number are rewritten so the books read consistently.
+ */
+export async function renameInvoice(id: string, rawNumber: string): Promise<Invoice | null> {
+  const existing = (await db.findById("invoices", v.idInput.parse(id))) as InvoiceRow | null;
+  if (!existing) return null;
+  const cleaned = cleanInvoiceNumber(String(rawNumber ?? ""));
+  if (!cleaned.ok) throw new Error(cleaned.error);
+  const number = cleaned.value;
+  if (number === existing.number) return invoiceToUi(existing, todayIso());
+  await assertNumberFree(number, existing.id);
+
+  const now = new Date().toISOString();
+  const updated = await updateOwned("invoices", existing.id, { number, updated_at: now });
+
+  const oldLabel = `Invoice ${existing.number} — payment`;
+  const payments = (await db.selectWhere("transactions", {
+    invoice_id: existing.id,
+  })) as TransactionRow[];
+  for (const t of payments) {
+    if (dec(t.description) === oldLabel)
+      await updateOwned("transactions", t.id, {
+        description: enc(`Invoice ${number} — payment`)!,
+        updated_at: now,
+      });
+  }
+
+  revalidateInvoiceViews();
+  if (payments.length) revalidateTxnViews();
+  return updated ? invoiceToUi(updated, todayIso()) : null;
+}
+
 /** Mark a draft as sent: stamp sent_at and mint the public share/PDF token. */
 export async function sendInvoice(id: string): Promise<Invoice | null> {
   await requirePro(); // Pro gate: building a draft is free; sending needs Pro.
   const now = new Date().toISOString();
-  const updated = await updateOwned("invoices", v.idInput.parse(id), {
+  const existing = (await db.findById("invoices", v.idInput.parse(id))) as InvoiceRow | null;
+  if (!existing) return null;
+  const updated = await updateOwned("invoices", existing.id, {
+    number: await issuedNumberFor(existing),
     status: "sent",
     sent_at: now,
     public_token: randomUUID().replace(/-/g, ""),
@@ -2412,6 +2473,7 @@ export async function markInvoicePaid(
     | null;
   if (!invoice) return { invoice: null, inflow: null };
   const now = new Date().toISOString();
+  const issued = await issuedNumberFor(invoice);
 
   const inflow: TransactionRow = {
     id: randomUUID(),
@@ -2420,7 +2482,7 @@ export async function markInvoicePaid(
     account_id: input.accountId,
     category_id: null,
     date: input.date,
-    description: enc(`Invoice ${invoice.number} — payment`)!,
+    description: enc(`Invoice ${issued} — payment`)!,
     amount: Math.abs(input.amount),
     currency: invoice.currency,
     status: "posted",
@@ -2438,6 +2500,7 @@ export async function markInvoicePaid(
   const fullyPaid = amountPaid >= invoice.total;
   const status: InvoiceStatus = fullyPaid ? "paid" : "partial";
   const updated = await updateOwned("invoices", invoice.id, {
+    number: issued,
     amount_paid: amountPaid,
     status,
     paid_at: fullyPaid ? now : invoice.paid_at,

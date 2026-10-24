@@ -10,10 +10,9 @@
 
 import type { InvoiceStatus, InvoiceFieldPrefs } from "@/lib/schema";
 
-/** The baseline a new user starts from: every section on, except the invoice
- *  number, which is hidden on what the client sees unless switched on. It is
- *  still generated and used inside the app (list, payments). Invoices saved
- *  before this toggle existed have no key, so they hide it too. */
+/** All sections on by default — the baseline a new user starts from. The
+ *  invoice number only ever appears once the invoice is sent (see
+ *  {@link displayInvoiceNumber}). */
 export const DEFAULT_INVOICE_PREFS: InvoiceFieldPrefs = {
   quantity: true,
   tax: true,
@@ -21,8 +20,68 @@ export const DEFAULT_INVOICE_PREFS: InvoiceFieldPrefs = {
   paymentDetails: true,
   notes: true,
   terms: true,
-  invoiceNumber: false,
+  invoiceNumber: true,
 };
+
+// ── Numbering ────────────────────────────────────────────────────────────────
+// Drafts carry a unique placeholder (the column is NOT NULL + unique per user);
+// the real, sequential number is issued when the invoice is sent, so deleted
+// drafts never leave gaps in the issued sequence.
+
+const DRAFT_PREFIX = "DRAFT-";
+
+/** Placeholder number for an unsent draft. Never shown to anyone. */
+export function draftNumber(invoiceId: string): string {
+  return `${DRAFT_PREFIX}${invoiceId.replace(/-/g, "").slice(0, 12)}`;
+}
+
+export function isDraftNumber(number: string | null | undefined): boolean {
+  return (number ?? "").startsWith(DRAFT_PREFIX);
+}
+
+/** Next issued number, INV-%04d, after the highest issued one. Custom one-off
+ *  numbers (e.g. "6") count by their trailing digits; draft placeholders don't. */
+export function nextIssuedNumber(existing: readonly string[]): string {
+  let max = 0;
+  for (const n of existing) {
+    if (isDraftNumber(n)) continue;
+    const m = /(\d+)\s*$/.exec(n ?? "");
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `INV-${String(max + 1).padStart(4, "0")}`;
+}
+
+/** The number to print on the client-facing invoice, or null to show none:
+ *  only once sent (never on a draft), and only when the toggle is on. */
+export function displayInvoiceNumber(invoice: {
+  number: string;
+  status: InvoiceStatus;
+  fieldPrefs: InvoiceFieldPrefs;
+}): string | null {
+  if (!invoice.fieldPrefs.invoiceNumber) return null;
+  if (invoice.status === "draft" || isDraftNumber(invoice.number)) return null;
+  return invoice.number;
+}
+
+export const MAX_INVOICE_NUMBER_LENGTH = 32;
+
+/** Validate a manually typed invoice number (rename / custom number). */
+export function cleanInvoiceNumber(
+  raw: string
+): { ok: true; value: string } | { ok: false; error: string } {
+  const value = raw.trim();
+  if (!value) return { ok: false, error: "Enter an invoice number." };
+  if (value.length > MAX_INVOICE_NUMBER_LENGTH)
+    return { ok: false, error: `Keep it under ${MAX_INVOICE_NUMBER_LENGTH} characters.` };
+  if (isDraftNumber(value.toUpperCase()))
+    return { ok: false, error: "Numbers starting with “DRAFT-” are reserved." };
+  return { ok: true, value };
+}
+
+/** How the app refers to an invoice in lists, titles and confirmations. */
+export function invoiceLabel(invoice: { number: string }): string {
+  return isDraftNumber(invoice.number) ? "Draft invoice" : invoice.number;
+}
 
 /** Coerce a stored/loose prefs map into a full, typed prefs object (missing → default). */
 export function normalizeInvoicePrefs(
@@ -42,15 +101,15 @@ export function normalizeInvoicePrefs(
   };
 }
 
-/** Download name for an invoice PDF — never leaks a hidden invoice number. */
+/** Download name for an invoice PDF — never leaks a number the document hides. */
 export function invoicePdfFilename(invoice: {
   number: string;
+  status: InvoiceStatus;
   issueDate: string;
   fieldPrefs: InvoiceFieldPrefs;
 }): string {
-  return invoice.fieldPrefs.invoiceNumber
-    ? `${invoice.number}.pdf`
-    : `invoice-${invoice.issueDate}.pdf`;
+  const shown = displayInvoiceNumber(invoice);
+  return shown ? `${shown.replace(/[^\w.-]+/g, "-")}.pdf` : `invoice-${invoice.issueDate}.pdf`;
 }
 
 /** The shape needed to compute a line's money — a subset of a line item. */

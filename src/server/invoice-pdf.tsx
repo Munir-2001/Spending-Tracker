@@ -12,7 +12,7 @@ import {
 } from "@react-pdf/renderer";
 
 import type { Client, Invoice } from "@/lib/data";
-import { amountDue } from "@/lib/invoice";
+import { amountDue, displayInvoiceNumber } from "@/lib/invoice";
 import { formatMoney, formatFullDate } from "@/lib/format";
 
 /**
@@ -139,6 +139,7 @@ function InvoicePdfDoc({
   const { currency } = invoice;
   const lines = invoice.lines ?? [];
   const prefs = invoice.fieldPrefs;
+  const shownNumber = displayInvoiceNumber(invoice);
   const pa = invoice.paymentAccount;
   const due = amountDue(invoice.total, invoice.amountPaid);
   // react-pdf's built-in Helvetica has broken metrics for some currency glyphs
@@ -148,7 +149,7 @@ function InvoicePdfDoc({
     formatMoney(m, { currency }).replace(/^[^\d\s.,-]+/, currency + " ");
 
   return (
-    <Document title={prefs.invoiceNumber ? `Invoice ${invoice.number}` : "Invoice"}>
+    <Document title={shownNumber ? `Invoice ${shownNumber}` : "Invoice"}>
       <Page size="A4" style={S.page}>
         {/* Letterhead */}
         <View style={S.head}>
@@ -172,10 +173,10 @@ function InvoicePdfDoc({
           </View>
           <View>
             <Text style={[S.eyebrow, S.right]}>
-              {prefs.invoiceNumber ? "Invoice no." : "Invoice"}
+              {shownNumber ? "Invoice no." : "Invoice"}
               {invoice.overdue ? "  ·  OVERDUE" : ""}
             </Text>
-            {prefs.invoiceNumber ? <Text style={S.number}>{invoice.number}</Text> : null}
+            {shownNumber ? <Text style={S.number}>{shownNumber}</Text> : null}
             <View style={S.metaLine}>
               <Text style={S.small}>Issued</Text>
               <Text>{formatFullDate(invoice.issueDate)}</Text>

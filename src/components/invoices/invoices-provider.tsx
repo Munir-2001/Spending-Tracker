@@ -19,6 +19,7 @@ import {
   sendInvoice as sendInvoiceAction,
   unsendInvoice as unsendInvoiceAction,
   voidInvoice as voidInvoiceAction,
+  renameInvoice as renameInvoiceAction,
   markInvoicePaid as markInvoicePaidAction,
   addPaymentAccount as addPaymentAccountAction,
   updatePaymentAccount as updatePaymentAccountAction,
@@ -61,6 +62,8 @@ type InvoicesContext = {
   send: (id: string) => void;
   unsend: (id: string) => void;
   voidOne: (id: string) => void;
+  /** Change an invoice's number at any status; resolves false on failure. */
+  rename: (id: string, number: string) => Promise<boolean>;
   pay: (input: InvoicePaymentInput) => Promise<void>;
 
   // Payment-account mutations
@@ -175,6 +178,18 @@ export function InvoicesProvider({
       .catch(() => toast.error("Couldn't unsend — it may already have payments."));
   }, []);
 
+  const rename = useCallback(async (id: string, number: string) => {
+    try {
+      const i = await renameInvoiceAction(id, number);
+      if (i) setInvoices((prev) => prev.map((x) => (x.id === id ? i : x)));
+      toast.success(`Renamed to ${number.trim()}`);
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error && e.message ? e.message : "Couldn't rename the invoice.");
+      return false;
+    }
+  }, []);
+
   const voidOne = useCallback((id: string) => {
     voidInvoiceAction(id)
       .then((i) => {
@@ -279,6 +294,7 @@ export function InvoicesProvider({
       send,
       unsend,
       voidOne,
+      rename,
       pay,
       createPaymentAccount,
       editPaymentAccount,
@@ -303,6 +319,7 @@ export function InvoicesProvider({
       send,
       unsend,
       voidOne,
+      rename,
       pay,
       createPaymentAccount,
       editPaymentAccount,

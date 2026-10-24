@@ -633,6 +633,8 @@ export type NewInvoiceInput = {
   notes?: string | null;
   terms?: string | null;
   fieldPrefs?: InvoiceFieldPrefs; // which sections/columns to show
+  /** One-off custom number (e.g. "6"). Blank = auto-number when sent. */
+  number?: string | null;
   lines: NewInvoiceLine[];
 };
 

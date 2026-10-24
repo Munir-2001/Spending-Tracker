@@ -1,5 +1,5 @@
 import type { Client, Invoice } from "@/lib/data";
-import { amountDue } from "@/lib/invoice";
+import { amountDue, displayInvoiceNumber } from "@/lib/invoice";
 import { formatMoney, formatFullDate } from "@/lib/format";
 import { StatusBadge } from "@/components/invoices/status-badge";
 import { cn } from "@/lib/utils";
@@ -74,6 +74,8 @@ export function InvoiceDocument({
   const { currency } = invoice;
   const lines = invoice.lines ?? [];
   const prefs = invoice.fieldPrefs;
+  // Issued on send — drafts never show a number.
+  const shownNumber = displayInvoiceNumber(invoice);
   const due = amountDue(invoice.total, invoice.amountPaid);
   const pa = invoice.paymentAccount;
 
@@ -119,13 +121,11 @@ export function InvoiceDocument({
 
           <div className="text-right">
             <div className="flex items-center justify-end gap-2">
-              <p className={LABEL}>{prefs.invoiceNumber ? "Invoice no." : "Invoice"}</p>
+              <p className={LABEL}>{shownNumber ? "Invoice no." : "Invoice"}</p>
               <StatusBadge status={invoice.status} overdue={invoice.overdue} />
             </div>
-            {prefs.invoiceNumber && (
-              <p className={cn("mt-2 text-lg font-semibold", nums)}>
-                {invoice.number}
-              </p>
+            {shownNumber && (
+              <p className={cn("mt-2 text-lg font-semibold", nums)}>{shownNumber}</p>
             )}
             <dl className="mt-3 space-y-1 text-sm">
               <div className="flex justify-between gap-8">

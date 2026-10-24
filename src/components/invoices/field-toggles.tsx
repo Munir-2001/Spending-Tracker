@@ -9,10 +9,11 @@ const FIELDS: { key: keyof InvoiceFieldPrefs; label: string }[] = [
   { key: "paymentDetails", label: "Payment details" },
   { key: "notes", label: "Notes" },
   { key: "terms", label: "Terms" },
+  { key: "invoiceNumber", label: "Invoice number" },
 ];
 
 /**
- * The six checkboxes that pick which optional sections an invoice shows. Shared
+ * The checkboxes that pick which optional sections an invoice shows. Shared
  * by the Settings default and the per-invoice editor so both read identically.
  */
 export function FieldToggles({

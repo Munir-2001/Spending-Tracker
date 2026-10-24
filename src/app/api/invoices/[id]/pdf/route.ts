@@ -1,5 +1,6 @@
 import { getInvoice, listClients } from "@/server/actions";
 import { renderInvoicePdf } from "@/server/invoice-pdf";
+import { invoicePdfFilename } from "@/lib/invoice";
 
 /**
  * Server-rendered PDF download for an invoice.
@@ -29,7 +30,7 @@ export async function GET(
   return new Response(new Uint8Array(pdf), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${invoice.number}.pdf"`,
+      "Content-Disposition": `inline; filename="${invoicePdfFilename(invoice)}"`,
       "Cache-Control": "private, no-store",
     },
   });

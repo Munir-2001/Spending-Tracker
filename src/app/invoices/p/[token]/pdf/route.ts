@@ -1,5 +1,6 @@
 import { getPublicInvoice } from "@/server/public-invoice";
 import { renderInvoicePdf } from "@/server/invoice-pdf";
+import { invoicePdfFilename } from "@/lib/invoice";
 
 /**
  * Public PDF download for a shared invoice link.
@@ -22,7 +23,7 @@ export async function GET(
   return new Response(new Uint8Array(pdf), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename="${result.invoice.number}.pdf"`,
+      "Content-Disposition": `inline; filename="${invoicePdfFilename(result.invoice)}"`,
       "Cache-Control": "private, no-store",
     },
   });

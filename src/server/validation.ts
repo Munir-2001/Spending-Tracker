@@ -190,6 +190,7 @@ const invoiceFieldPrefs = z
     paymentDetails: z.boolean(),
     notes: z.boolean(),
     terms: z.boolean(),
+    invoiceNumber: z.boolean(),
   })
   .partial();
 

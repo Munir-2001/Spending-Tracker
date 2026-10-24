@@ -313,6 +313,7 @@ export type InvoiceFieldPrefs = {
   paymentDetails: boolean; // the receiving-bank block
   notes: boolean;
   terms: boolean;
+  invoiceNumber: boolean; // the "Invoice no." in the header (still kept internally)
 };
 
 export type InvoiceStatus =

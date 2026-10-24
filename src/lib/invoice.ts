@@ -10,7 +10,10 @@
 
 import type { InvoiceStatus, InvoiceFieldPrefs } from "@/lib/schema";
 
-/** All sections on by default — the baseline a new user starts from. */
+/** The baseline a new user starts from: every section on, except the invoice
+ *  number, which is hidden on what the client sees unless switched on. It is
+ *  still generated and used inside the app (list, payments). Invoices saved
+ *  before this toggle existed have no key, so they hide it too. */
 export const DEFAULT_INVOICE_PREFS: InvoiceFieldPrefs = {
   quantity: true,
   tax: true,
@@ -18,6 +21,7 @@ export const DEFAULT_INVOICE_PREFS: InvoiceFieldPrefs = {
   paymentDetails: true,
   notes: true,
   terms: true,
+  invoiceNumber: false,
 };
 
 /** Coerce a stored/loose prefs map into a full, typed prefs object (missing → default). */
@@ -34,7 +38,19 @@ export function normalizeInvoicePrefs(
     paymentDetails: pick("paymentDetails"),
     notes: pick("notes"),
     terms: pick("terms"),
+    invoiceNumber: pick("invoiceNumber"),
   };
+}
+
+/** Download name for an invoice PDF — never leaks a hidden invoice number. */
+export function invoicePdfFilename(invoice: {
+  number: string;
+  issueDate: string;
+  fieldPrefs: InvoiceFieldPrefs;
+}): string {
+  return invoice.fieldPrefs.invoiceNumber
+    ? `${invoice.number}.pdf`
+    : `invoice-${invoice.issueDate}.pdf`;
 }
 
 /** The shape needed to compute a line's money — a subset of a line item. */

@@ -148,7 +148,7 @@ function InvoicePdfDoc({
     formatMoney(m, { currency }).replace(/^[^\d\s.,-]+/, currency + " ");
 
   return (
-    <Document title={`Invoice ${invoice.number}`}>
+    <Document title={prefs.invoiceNumber ? `Invoice ${invoice.number}` : "Invoice"}>
       <Page size="A4" style={S.page}>
         {/* Letterhead */}
         <View style={S.head}>
@@ -172,9 +172,10 @@ function InvoicePdfDoc({
           </View>
           <View>
             <Text style={[S.eyebrow, S.right]}>
-              Invoice no.{invoice.overdue ? "  ·  OVERDUE" : ""}
+              {prefs.invoiceNumber ? "Invoice no." : "Invoice"}
+              {invoice.overdue ? "  ·  OVERDUE" : ""}
             </Text>
-            <Text style={S.number}>{invoice.number}</Text>
+            {prefs.invoiceNumber ? <Text style={S.number}>{invoice.number}</Text> : null}
             <View style={S.metaLine}>
               <Text style={S.small}>Issued</Text>
               <Text>{formatFullDate(invoice.issueDate)}</Text>

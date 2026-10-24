@@ -119,12 +119,14 @@ export function InvoiceDocument({
 
           <div className="text-right">
             <div className="flex items-center justify-end gap-2">
-              <p className={LABEL}>Invoice no.</p>
+              <p className={LABEL}>{prefs.invoiceNumber ? "Invoice no." : "Invoice"}</p>
               <StatusBadge status={invoice.status} overdue={invoice.overdue} />
             </div>
-            <p className={cn("mt-2 text-lg font-semibold", nums)}>
-              {invoice.number}
-            </p>
+            {prefs.invoiceNumber && (
+              <p className={cn("mt-2 text-lg font-semibold", nums)}>
+                {invoice.number}
+              </p>
+            )}
             <dl className="mt-3 space-y-1 text-sm">
               <div className="flex justify-between gap-8">
                 <dt className="text-muted-foreground">Issued</dt>

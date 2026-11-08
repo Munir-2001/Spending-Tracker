@@ -99,6 +99,8 @@ export type TransactionRow = {
   // write (column defaults NULL); always present on read. Set only by
   // markInvoicePaid/recordInvoicePayment so paid invoices count as income.
   invoice_id?: string | null;
+  // The event this transaction is grouped under (see 0024). Optional on write.
+  event_id?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -287,6 +289,27 @@ export type RecurringRow = {
   updated_at: string;
 };
 
+// ── Events ──────────────────────────────────────────────────────────────────
+
+/**
+ * An occasion expenses are grouped under (a trip, a wedding). Transactions
+ * point at it via `transactions.event_id`; deleting it only detaches them.
+ */
+export type EventRow = {
+  id: string;
+  user_id: string;
+  org_id: string | null;
+  name: string; // encrypted
+  start_date: string | null; // iso date
+  end_date: string | null; // iso date
+  budget: number | null; // minor units of `currency`; null = no budget
+  currency: string;
+  color: string | null;
+  notes: string | null; // encrypted
+  created_at: string;
+  updated_at: string;
+};
+
 // ── Invoicing (business tier) ───────────────────────────────────────────────
 
 /** A billable customer. All PII columns are encrypted at rest. */
@@ -440,6 +463,7 @@ export type TableMap = {
   invoice_lines: InvoiceLineRow;
   payment_accounts: PaymentAccountRow;
   subscriptions: SubscriptionRow;
+  events: EventRow;
 };
 
 export type TableName = keyof TableMap;
@@ -466,6 +490,7 @@ export const WORKSPACE_SCOPED: ReadonlySet<TableName> = new Set([
   "invoices",
   "payment_accounts",
   "net_worth_snapshots",
+  "events",
 ]);
 
 /** A line item when itemizing a transaction. */
@@ -492,6 +517,8 @@ export type NewTransactionInput = {
   reimbursement?: { person: string; amount: number; note: string };
   /** Manual flag: this inflow should never count as income (refund, gift, …). */
   notIncome?: boolean;
+  /** Event to group this under; null = none; omitted = leave unchanged on edit. */
+  eventId?: string | null;
 };
 
 /** Input for moving money between an account and another account or asset. */
@@ -600,6 +627,17 @@ export type NewRecurringInput = {
   cadence: RecurringCadence;
   nextDate: string;
   autoPost: boolean;
+};
+
+/** Input for creating/editing an event (UI-facing, camelCase). */
+export type NewEventInput = {
+  name: string;
+  startDate: string | null;
+  endDate: string | null;
+  budget: number | null; // minor units of `currency`
+  currency: string;
+  color: string;
+  notes: string | null;
 };
 
 /** Input for creating/editing a client (UI-facing, camelCase). */

@@ -25,6 +25,7 @@ function lot(o: Partial<AssetLot> & { quantity: number; goldCost: number }): Ass
     currency: o.currency ?? "EUR",
     purchaseFxRate: o.purchaseFxRate === undefined ? EUR : o.purchaseFxRate,
     note: null,
+    fundingTxnId: null,
   };
 }
 

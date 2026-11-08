@@ -9,6 +9,7 @@ import { PrivacyToggle } from "@/components/privacy-toggle";
 import { PrivacyGate } from "@/components/privacy-gate";
 import { TransactionsProvider } from "@/components/transactions/transactions-provider";
 import { InvoicesProvider } from "@/components/invoices/invoices-provider";
+import { EventsProvider } from "@/components/events/events-provider";
 import { PlanProvider } from "@/components/plan-provider";
 import { WorkspaceProvider } from "@/components/workspaces/workspace-provider";
 import { NewTransactionButton } from "@/components/transactions/new-transaction-button";
@@ -27,6 +28,7 @@ import {
   listBudgets,
   listCategories,
   listClients,
+  listEvents,
   listGoals,
   listInvoices,
   listPaymentAccounts,
@@ -57,6 +59,7 @@ export default async function AppLayout({
   let initialAssets: Awaited<ReturnType<typeof listAssets>> = [];
   let initialLots: Awaited<ReturnType<typeof listAllLots>> = [];
   let initialGoals: Awaited<ReturnType<typeof listGoals>> = [];
+  let initialEvents: Awaited<ReturnType<typeof listEvents>> = [];
   let initialRecurring: Awaited<ReturnType<typeof listRecurring>> = [];
   let initialClients: Awaited<ReturnType<typeof listClients>> = [];
   let initialInvoices: Awaited<ReturnType<typeof listInvoices>> = [];
@@ -87,6 +90,7 @@ export default async function AppLayout({
       initialAssets,
       initialLots,
       initialGoals,
+      initialEvents,
       initialRecurring,
       initialClients,
       initialInvoices,
@@ -105,6 +109,7 @@ export default async function AppLayout({
       listAssets(),
       listAllLots(),
       listGoals(),
+      listEvents(),
       listRecurring(),
       listClients(),
       listInvoices(),
@@ -147,6 +152,8 @@ export default async function AppLayout({
       <PlanProvider value={entitlement}>
       <WorkspaceProvider value={{ workspaces, activeId }}>
       <ConfirmProvider>
+      {/* Outside TransactionsProvider so the add-expense dialog can pick an event. */}
+      <EventsProvider key={activeId} initialEvents={initialEvents}>
       <TransactionsProvider
         key={activeId}
         initialTransactions={initialTransactions}
@@ -188,6 +195,7 @@ export default async function AppLayout({
         </SidebarInset>
       </InvoicesProvider>
       </TransactionsProvider>
+      </EventsProvider>
       </ConfirmProvider>
       </WorkspaceProvider>
       </PlanProvider>

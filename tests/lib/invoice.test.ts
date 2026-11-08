@@ -9,6 +9,13 @@ import {
   lineTax,
   normalizeInvoicePrefs,
   DEFAULT_INVOICE_PREFS,
+  invoicePdfFilename,
+  draftNumber,
+  isDraftNumber,
+  nextIssuedNumber,
+  displayInvoiceNumber,
+  invoiceLabel,
+  cleanInvoiceNumber,
 } from "@/lib/invoice";
 
 describe("invoice line math", () => {
@@ -93,7 +100,12 @@ describe("normalizeInvoicePrefs", () => {
       paymentDetails: true,
       notes: true,
       terms: true,
+      invoiceNumber: true,
     });
+  });
+
+  it("keeps the invoice number off when it was switched off", () => {
+    expect(normalizeInvoicePrefs({ invoiceNumber: false }).invoiceNumber).toBe(false);
   });
 
   it("ignores non-boolean junk", () => {
@@ -114,5 +126,97 @@ describe("isOverdue", () => {
     expect(isOverdue("void", 10000, 0, "2026-08-01", today)).toBe(false);
     expect(isOverdue("paid", 10000, 10000, "2026-08-01", today)).toBe(false);
     expect(isOverdue("sent", 10000, 0, "2026-10-01", today)).toBe(false);
+  });
+});
+
+describe("invoicePdfFilename", () => {
+  const inv = { number: "INV-0007", issueDate: "2026-10-24", status: "sent" as const };
+
+  it("uses the issue date when the number is hidden", () => {
+    const prefs = { ...DEFAULT_INVOICE_PREFS, invoiceNumber: false };
+
+    expect(invoicePdfFilename({ ...inv, fieldPrefs: prefs })).toBe("invoice-2026-10-24.pdf");
+  });
+
+  it("uses the number when it is shown", () => {
+    const prefs = { ...DEFAULT_INVOICE_PREFS, invoiceNumber: true };
+
+    expect(invoicePdfFilename({ ...inv, fieldPrefs: prefs })).toBe("INV-0007.pdf");
+  });
+});
+
+describe("invoice numbering — assigned when sent", () => {
+  it("gives a draft a placeholder that is never shown as its number", () => {
+    const n = draftNumber("3f2a9c1e-0000-4000-8000-000000000000");
+
+    expect(isDraftNumber(n)).toBe(true);
+    expect(isDraftNumber("INV-0007")).toBe(false);
+    expect(isDraftNumber("6")).toBe(false);
+  });
+
+  it("issues the next number after the highest issued one, ignoring drafts", () => {
+    const numbers = ["INV-0001", "INV-0002", draftNumber("a1b2c3d4-9999"), "INV-0003"];
+
+    expect(nextIssuedNumber(numbers)).toBe("INV-0004");
+  });
+
+  it("starts at INV-0001 when nothing has been issued yet", () => {
+    expect(nextIssuedNumber([draftNumber("deadbeef-1234")])).toBe("INV-0001");
+  });
+
+  it("continues after a custom one-off number like '6'", () => {
+    expect(nextIssuedNumber(["INV-0004", "6"])).toBe("INV-0007");
+  });
+});
+
+describe("displayInvoiceNumber", () => {
+  const on = { ...DEFAULT_INVOICE_PREFS, invoiceNumber: true };
+
+  it("shows the number on a sent invoice", () => {
+    expect(displayInvoiceNumber({ number: "INV-0004", status: "sent", fieldPrefs: on })).toBe("INV-0004");
+  });
+
+  it("shows nothing on a draft, even one that already had a number", () => {
+    expect(displayInvoiceNumber({ number: "INV-0004", status: "draft", fieldPrefs: on })).toBeNull();
+    expect(displayInvoiceNumber({ number: draftNumber("abcd1234-0"), status: "draft", fieldPrefs: on })).toBeNull();
+  });
+
+  it("shows nothing when the toggle is off", () => {
+    const off = { ...DEFAULT_INVOICE_PREFS, invoiceNumber: false };
+
+    expect(displayInvoiceNumber({ number: "INV-0004", status: "paid", fieldPrefs: off })).toBeNull();
+  });
+
+  it("is on by default again", () => {
+    expect(DEFAULT_INVOICE_PREFS.invoiceNumber).toBe(true);
+  });
+});
+
+describe("invoiceLabel (in-app)", () => {
+  it("labels an unnumbered draft as a draft", () => {
+    expect(invoiceLabel({ number: draftNumber("abcd1234-0") })).toBe("Draft invoice");
+  });
+
+  it("uses the number once issued", () => {
+    expect(invoiceLabel({ number: "INV-0004" })).toBe("INV-0004");
+  });
+});
+
+describe("cleanInvoiceNumber (manual rename)", () => {
+  it("accepts and trims a normal number", () => {
+    expect(cleanInvoiceNumber("  INV-0006 ")).toEqual({ ok: true, value: "INV-0006" });
+    expect(cleanInvoiceNumber("0006")).toEqual({ ok: true, value: "0006" });
+  });
+
+  it("rejects an empty number", () => {
+    expect(cleanInvoiceNumber("   ").ok).toBe(false);
+  });
+
+  it("rejects the reserved draft placeholder prefix", () => {
+    expect(cleanInvoiceNumber("DRAFT-123").ok).toBe(false);
+  });
+
+  it("rejects a number longer than 32 characters", () => {
+    expect(cleanInvoiceNumber("X".repeat(33)).ok).toBe(false);
   });
 });

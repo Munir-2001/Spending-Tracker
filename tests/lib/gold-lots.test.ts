@@ -32,6 +32,7 @@ function lot(
     currency: o.currency ?? "PKR",
     purchaseFxRate: o.purchaseFxRate === undefined ? PKR_RATE : o.purchaseFxRate,
     note: null,
+    fundingTxnId: null,
   };
 }
 

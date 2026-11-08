@@ -73,6 +73,7 @@ import {
   saveUserTimezone as saveUserTimezoneAction,
   refreshRates as refreshRatesAction,
   updateTransaction,
+  assignEvent as assignEventAction,
   type AppSettings,
   type ImportRow,
 } from "@/server/actions";
@@ -108,7 +109,13 @@ type Ctx = {
   isAddOpen: boolean;
   editingTransaction: Transaction | null;
   openAdd: () => void;
+  /** Open "add transaction" with the expense pre-linked to an event. */
+  openAddForEvent: (eventId: string) => void;
   openEditTransaction: (t: Transaction) => void;
+  /** Link transactions to an event (null = unlink); resolves false on failure. */
+  assignEvent: (ids: string[], eventId: string | null) => Promise<boolean>;
+  /** Locally clear a deleted event from its transactions (server already did). */
+  forgetEvent: (eventId: string) => void;
   setAddOpen: (open: boolean) => void;
 
   // Transaction detail view
@@ -339,6 +346,8 @@ export function TransactionsProvider({
     [baseCurrency, rates]
   );
   const [isAddOpen, setAddOpenState] = useState(false);
+  // Event a freshly opened "add" form should start linked to (event pages).
+  const [addEventId, setAddEventId] = useState<string | null>(null);
   const [editingTransaction, setEditingTransaction] =
     useState<Transaction | null>(null);
   const [isDetailOpen, setDetailOpenState] = useState(false);
@@ -350,7 +359,27 @@ export function TransactionsProvider({
 
   const setAddOpen = useCallback((open: boolean) => {
     setAddOpenState(open);
-    if (!open) setEditingTransaction(null);
+    if (!open) {
+      setEditingTransaction(null);
+      setAddEventId(null);
+    }
+  }, []);
+
+  const assignEvent = useCallback(async (ids: string[], eventId: string | null) => {
+    try {
+      const changed = new Set(await assignEventAction(ids, eventId));
+      setItems((prev) => prev.map((t) => (changed.has(t.id) ? { ...t, eventId } : t)));
+      return true;
+    } catch {
+      toast.error("Couldn't update the event's expenses. Please try again.");
+      return false;
+    }
+  }, []);
+
+  const forgetEvent = useCallback((eventId: string) => {
+    setItems((prev) =>
+      prev.map((t) => (t.eventId === eventId ? { ...t, eventId: null } : t))
+    );
   }, []);
 
   const addTransaction = useCallback((input: NewTransaction) => {
@@ -816,12 +845,20 @@ export function TransactionsProvider({
       editingTransaction,
       openAdd: () => {
         setEditingTransaction(null);
+        setAddEventId(null);
+        setAddOpenState(true);
+      },
+      openAddForEvent: (eventId: string) => {
+        setEditingTransaction(null);
+        setAddEventId(eventId);
         setAddOpenState(true);
       },
       openEditTransaction: (t: Transaction) => {
         setEditingTransaction(t);
         setAddOpenState(true);
       },
+      assignEvent,
+      forgetEvent,
       setAddOpen,
       isDetailOpen,
       detailTransaction,
@@ -958,6 +995,8 @@ export function TransactionsProvider({
       isAddOpen,
       editingTransaction,
       setAddOpen,
+      assignEvent,
+      forgetEvent,
       isDetailOpen,
       detailTransaction,
       isImportOpen,
@@ -1034,6 +1073,7 @@ export function TransactionsProvider({
         onTransfer={recordTransfer}
         openClaims={items.filter((t) => t.reimbursement && !t.reimbursement.settled)}
         editing={editingTransaction}
+        presetEventId={addEventId}
         accounts={accounts}
         assets={assets}
         categories={categories}

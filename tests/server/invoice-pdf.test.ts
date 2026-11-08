@@ -42,6 +42,7 @@ const invoice: Invoice = {
     paymentDetails: true,
     notes: true,
     terms: true,
+    invoiceNumber: true,
   },
   paymentAccount: {
     id: "pa1",

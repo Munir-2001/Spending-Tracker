@@ -23,6 +23,7 @@ import {
   // Repeat, // re-add when re-enabling the hidden Subscriptions nav below
   HandHeart,
   Sparkles,
+  PartyPopper,
   Settings,
   LifeBuoy,
   HelpCircle,
@@ -92,6 +93,7 @@ const navGroups = [
     label: "Organize",
     items: [
       { title: "Categories", href: "/categories", icon: Tag },
+      { title: "Events", href: "/events", icon: PartyPopper },
       { title: "Reimbursements", href: "/reimbursements", icon: HandCoins },
     ],
   },

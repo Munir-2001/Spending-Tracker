@@ -35,6 +35,7 @@ import { formatMoney } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { isLotPriced } from "@/lib/asset-funding";
 import type { NewTransaction } from "@/components/transactions/transactions-provider";
+import { EventPicker, NO_EVENT } from "@/components/events/event-picker";
 
 type Kind = "expense" | "income" | "transfer";
 type ItemRow = {
@@ -59,6 +60,7 @@ export function AddTransactionDialog({
   onTransfer,
   openClaims,
   editing,
+  presetEventId = null,
   accounts,
   assets,
   categories,
@@ -76,6 +78,8 @@ export function AddTransactionDialog({
   onTransfer: (input: TransferInput) => void;
   openClaims: Transaction[];
   editing: Transaction | null;
+  /** For a new expense: the event it should start linked to. */
+  presetEventId?: string | null;
   accounts: Account[];
   assets: Asset[];
   categories: Category[];
@@ -134,6 +138,7 @@ export function AddTransactionDialog({
   const [repayClaimId, setRepayClaimId] = useState("");
   // An inflow the user marks as not real income (refund, gift, transfer in).
   const [notIncomeOn, setNotIncomeOn] = useState(false);
+  const [eventId, setEventId] = useState(NO_EVENT);
   // Transfer destination, encoded as "acc:<id>" or "ast:<id>".
   const [toTarget, setToTarget] = useState("");
   // Transfer source, encoded as "acc:<id>" or "ast:<id>" (accounts or assets).
@@ -197,6 +202,7 @@ export function AddTransactionDialog({
       setRepayClaimId("");
       setToTarget("");
       setNotIncomeOn(!!editing.notIncome);
+      setEventId(editing.eventId || NO_EVENT);
     } else {
       setItemized(false);
       setItemRows([]);
@@ -208,6 +214,7 @@ export function AddTransactionDialog({
       setRepayClaimId("");
       setToTarget("");
       setNotIncomeOn(false);
+      setEventId(presetEventId || NO_EVENT);
       // Seed with the user's default wallet (if it still exists), else the first.
       // Set authoritatively (not `prev || …`) — a prior submit's reset() leaves a
       // stale account in state, and `prev ||` would keep it instead of honoring
@@ -316,6 +323,7 @@ export function AddTransactionDialog({
     setRepayClaimId("");
     setToTarget("");
     setNotIncomeOn(false);
+    setEventId(NO_EVENT);
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -453,6 +461,9 @@ export function AddTransactionDialog({
         };
       }
     }
+
+    // Events group spending; income keeps whatever link it already had.
+    if (kind === "expense") input.eventId = eventId === NO_EVENT ? null : eventId;
 
     if (editing) {
       onSave(editing.id, input);
@@ -1107,6 +1118,8 @@ export function AddTransactionDialog({
                 </div>
               )
             )}
+
+            {kind === "expense" && <EventPicker value={eventId} onChange={setEventId} />}
 
             {/* Bought for a friend (reimbursable) — expenses only, not itemized */}
             {kind === "expense" && !useItems && (

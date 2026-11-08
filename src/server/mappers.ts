@@ -103,6 +103,7 @@ export function transactionToUi(
     settlesId: r.settles_id ?? undefined,
     invoiceId: r.invoice_id ?? null,
     notes: dec(r.notes) ?? undefined,
+    eventId: r.event_id ?? null,
   };
 }
 

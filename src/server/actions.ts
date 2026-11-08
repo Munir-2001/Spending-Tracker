@@ -38,6 +38,8 @@ import {
   type BudgetRow,
   type CategoryRow,
   type GoalRow,
+  type EventRow,
+  type NewEventInput,
   type NewAccountInput,
   type NewAssetInput,
   type NewCategoryInput,
@@ -73,6 +75,7 @@ import type {
   Client,
   Feedback,
   Goal,
+  SpendEvent,
   Invoice,
   PaymentAccount,
   NetWorthSnapshot,
@@ -919,6 +922,8 @@ export async function createTransaction(
     reimburse_amount: input.reimbursement?.amount ?? 0,
     reimburse_note: enc(input.reimbursement?.note ?? null),
     not_income: input.notIncome ?? false,
+    // Only written when set, so saving still works before migration 0024 runs.
+    ...(input.eventId && { event_id: await ownedEventId(input.eventId) }),
     created_at: now,
     updated_at: now,
   };
@@ -939,6 +944,7 @@ export async function updateTransaction(
   const currency = input.currency || account?.currency || "USD";
   const now = new Date().toISOString();
   const split = Boolean(input.items && input.items.length);
+  const eventPatch = await eventLinkPatch(id, input.eventId);
   const { rows: lineRows, items, total } = buildLines(id, input, now);
 
   // Replace any existing line items.
@@ -957,6 +963,7 @@ export async function updateTransaction(
     reimburse_amount: input.reimbursement?.amount ?? 0,
     reimburse_note: enc(input.reimbursement?.note ?? null),
     not_income: input.notIncome ?? false,
+    ...eventPatch,
     updated_at: now,
   });
   revalidateTxnViews();
@@ -1314,6 +1321,7 @@ function revalidateTxnViews() {
   revalidatePath("/ledger");
   revalidatePath("/reports");
   revalidatePath("/budgets");
+  revalidatePath("/events");
 }
 
 // ── Settings: display (base) currency + FX rates ────────────────────────────
@@ -1819,6 +1827,139 @@ export async function deleteGoal(id: string): Promise<void> {
   v.idInput.parse(id);
   await removeOwned("goals", id);
   revalidateGoalViews();
+}
+
+// ── Events (group expenses under a trip, wedding, …) ─────────────────────────
+function eventToUi(r: EventRow): SpendEvent {
+  return {
+    id: r.id,
+    name: dec(r.name) ?? "",
+    startDate: r.start_date,
+    endDate: r.end_date,
+    budget: r.budget,
+    currency: r.currency,
+    tint: r.color ?? "var(--chart-1)",
+    notes: dec(r.notes),
+  };
+}
+
+function eventFields(input: NewEventInput) {
+  return {
+    name: enc(input.name)!,
+    start_date: input.startDate,
+    end_date: input.endDate,
+    budget: input.budget,
+    currency: input.currency,
+    color: input.color,
+    notes: enc(input.notes),
+  };
+}
+
+/**
+ * Resolve an event id the caller wants to link to, or null. Throws if it isn't
+ * one of the user's events in this workspace — a foreign-key check alone would
+ * let a transaction point at someone else's event.
+ */
+async function ownedEventId(id: string | null | undefined): Promise<string | null> {
+  if (!id) return null;
+  const event = await db.findById("events", id);
+  if (!event || event.user_id !== (await getUserId())) throw new Error("Event not found");
+  return event.id;
+}
+
+/**
+ * The event_id change for an edit, or nothing. Omitted = leave the link alone
+ * (callers that don't know about events); unlinking an unlinked row writes
+ * nothing, so plain edits keep working before migration 0024 runs.
+ */
+async function eventLinkPatch(
+  txnId: string,
+  eventId: string | null | undefined
+): Promise<Pick<TransactionRow, "event_id"> | Record<string, never>> {
+  if (eventId === undefined) return {};
+  if (eventId) return { event_id: await ownedEventId(eventId) };
+  const current = await db.findById("transactions", txnId);
+  return current?.event_id ? { event_id: null } : {};
+}
+
+/** Postgres/PostgREST "no such table" — the events migration hasn't run yet. */
+function isMissingTable(err: unknown): boolean {
+  const code = (err as { code?: string } | null)?.code;
+  return code === "42P01" || code === "PGRST205";
+}
+
+export async function listEvents(): Promise<SpendEvent[]> {
+  try {
+    const rows = await db.selectAll("events");
+    return rows.map(eventToUi);
+  } catch (err) {
+    // Don't take the whole app down before 0024_events.sql is applied.
+    if (isMissingTable(err)) return [];
+    throw err;
+  }
+}
+
+export async function createEvent(raw: NewEventInput): Promise<SpendEvent> {
+  const input = v.eventInput.parse(raw) as NewEventInput;
+  const now = new Date().toISOString();
+  const row: EventRow = {
+    id: randomUUID(),
+    user_id: await getUserId(),
+    org_id: null,
+    ...eventFields(input),
+    created_at: now,
+    updated_at: now,
+  };
+  await db.insert("events", row);
+  revalidatePath("/events");
+  return eventToUi(row);
+}
+
+export async function updateEvent(
+  id: string,
+  raw: NewEventInput
+): Promise<SpendEvent | null> {
+  const input = v.eventInput.parse(raw) as NewEventInput;
+  v.idInput.parse(id);
+  const updated = await updateOwned("events", id, {
+    ...eventFields(input),
+    updated_at: new Date().toISOString(),
+  });
+  revalidatePath("/events");
+  return updated ? eventToUi(updated) : null;
+}
+
+/**
+ * Delete an event. Its transactions are detached, never deleted — they keep
+ * their amounts, categories and accounts. Returns the detached ids.
+ */
+export async function deleteEvent(id: string): Promise<string[]> {
+  v.idInput.parse(id);
+  const linked = await db.selectWhere("transactions", { event_id: id });
+  const now = new Date().toISOString();
+  // The DB would null these on delete, but the local file store has no FKs.
+  for (const t of linked) await updateOwned("transactions", t.id, { event_id: null, updated_at: now });
+  await removeOwned("events", id);
+  revalidatePath("/events");
+  revalidateTxnViews();
+  return linked.map((t) => t.id);
+}
+
+/** Attach transactions to an event, or detach them (eventId null). */
+export async function assignEvent(
+  transactionIds: string[],
+  eventId: string | null
+): Promise<string[]> {
+  const input = v.eventAssignment.parse({ transactionIds, eventId });
+  const target = await ownedEventId(input.eventId);
+  const now = new Date().toISOString();
+  const changed: string[] = [];
+  for (const id of new Set(input.transactionIds)) {
+    const updated = await updateOwned("transactions", id, { event_id: target, updated_at: now });
+    if (updated) changed.push(updated.id);
+  }
+  revalidateTxnViews();
+  return changed;
 }
 
 // ── Recurring rules + bill reminders ─────────────────────────────────────────

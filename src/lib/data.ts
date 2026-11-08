@@ -121,6 +121,8 @@ export type Transaction = {
   invoiceId?: string | null;
   /** Free-text note (transfer memo, refund reference, etc.). */
   notes?: string;
+  /** The event this transaction is grouped under, if any. */
+  eventId?: string | null;
 };
 
 export type Budget = {
@@ -138,6 +140,18 @@ export type Goal = {
   currency: string;
   targetDate: string | null;
   tint: string;
+};
+
+/** An occasion expenses are grouped under (trip, wedding, conference…). */
+export type SpendEvent = {
+  id: string;
+  name: string;
+  startDate: string | null;
+  endDate: string | null;
+  budget: number | null; // minor units of `currency`; null = no budget
+  currency: string;
+  tint: string;
+  notes: string | null;
 };
 
 export type Feedback = {

@@ -79,6 +79,7 @@ export const transactionInput = z.object({
   date: isoDate,
   items: z.array(lineInput).max(100).optional(),
   notIncome: z.boolean().optional(),
+  eventId: idStr.nullable().optional(),
   reimbursement: z
     .object({
       person: z.string().trim().max(120),
@@ -224,6 +225,26 @@ export const recurringInput = z.object({
   cadence: z.enum(["weekly", "monthly", "yearly"]),
   nextDate: isoDate,
   autoPost: z.boolean(),
+});
+
+export const eventInput = z
+  .object({
+    name: reqStr(120),
+    startDate: isoDate.nullable(),
+    endDate: isoDate.nullable(),
+    budget: z.number().int().positive().nullable(),
+    currency,
+    color: colorStr,
+    notes: optStr(2000),
+  })
+  .refine((e) => !e.startDate || !e.endDate || e.endDate >= e.startDate, {
+    message: "The end date can't be before the start date.",
+  });
+
+// Bulk attach/detach: which transactions, and the event (null = remove).
+export const eventAssignment = z.object({
+  transactionIds: z.array(idStr).min(1).max(1000),
+  eventId: idStr.nullable(),
 });
 
 // A signed integer delta for adjusting a goal's saved amount.

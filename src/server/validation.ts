@@ -169,6 +169,9 @@ export const repaymentInput = z.object({
   amount: intAmount,
   currency,
   date: isoDate,
+  fxRate: z.number().finite().positive().max(1e9).nullable(),
+  settle: z.boolean(),
+  existingId: idStr.optional(),
 });
 
 export const importRows = z

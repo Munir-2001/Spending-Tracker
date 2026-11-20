@@ -101,6 +101,7 @@ export function transactionToUi(
     isTransfer: r.is_transfer ?? false,
     notIncome: r.not_income ?? false,
     settlesId: r.settles_id ?? undefined,
+    fxRate: r.fx_rate == null ? null : Number(r.fx_rate),
     invoiceId: r.invoice_id ?? null,
     notes: dec(r.notes) ?? undefined,
     eventId: r.event_id ?? null,

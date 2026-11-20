@@ -14,6 +14,7 @@ import type {
 import type { Fx } from "@/lib/currency";
 import { toMinorUnits, toMajorUnits } from "@/lib/currency";
 import { gramsOf, goldValueMajor, makingChargePct } from "@/lib/gold";
+import { claimRemaining, repaymentsByClaim } from "@/lib/reimbursement";
 
 /**
  * The per-category contributions of a transaction. Split transactions return
@@ -741,15 +742,19 @@ export function detectSubscriptions(
   return subs;
 }
 
-/** Total still owed to you across unsettled reimbursements, in base currency. */
+/**
+ * Total still owed to you across unsettled reimbursements, in base currency —
+ * net of any partial repayments already linked to each claim.
+ */
 export function pendingReceivablesBase(
   transactions: Transaction[],
   fx: Fx
 ): number {
+  const repaid = repaymentsByClaim(transactions);
   let total = 0;
   for (const t of transactions)
     if (t.reimbursement && !t.reimbursement.settled)
-      total += fx.toBase(t.reimbursement.amount, t.currency);
+      total += fx.toBase(claimRemaining(t, repaid.get(t.id) ?? [], fx), t.currency);
   return total;
 }
 

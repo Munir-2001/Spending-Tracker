@@ -117,6 +117,8 @@ export type Transaction = {
   notIncome?: boolean;
   /** For a repayment inflow: the id of the reimbursable transaction it settles. */
   settlesId?: string;
+  /** For a cross-currency repayment: claim-currency units per 1 received unit. */
+  fxRate?: number | null;
   /** For an invoice-payment inflow: the id of the invoice it pays. */
   invoiceId?: string | null;
   /** Free-text note (transfer memo, refund reference, etc.). */

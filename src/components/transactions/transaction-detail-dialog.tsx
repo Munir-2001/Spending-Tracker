@@ -82,7 +82,7 @@ export function TransactionDetailDialog({
             )}
             {t.isReimbursement && (
               <span className="rounded bg-income/10 px-1.5 py-px text-[10px] font-medium text-income">
-                Repayment · not income
+                Repayment{t.fxRate ? ` · rate ${Number(t.fxRate.toPrecision(6))}` : ""} · not income
               </span>
             )}
             {t.isTransfer && !t.isReimbursement && (

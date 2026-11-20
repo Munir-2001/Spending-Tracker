@@ -87,6 +87,7 @@ import { AdjustBalanceDialog } from "@/components/accounts/adjust-balance-dialog
 import { ImportDialog } from "@/components/transactions/import-dialog";
 import { CategoryDialog } from "@/components/categories/category-dialog";
 import { AssetDialog } from "@/components/assets/asset-dialog";
+import { claimRemaining, repaymentsByClaim } from "@/lib/reimbursement";
 
 export type NewTransaction = NewTransactionInput;
 export type NewAccount = NewAccountInput;
@@ -428,11 +429,17 @@ export function TransactionsProvider({
           let next = prev.map((t) =>
             updated && t.id === input.claimId ? updated : t
           );
-          if (inflow) next = [inflow, ...next];
+          // A linked payment replaces its existing row; a new one is prepended.
+          if (inflow)
+            next = input.existingId
+              ? next.map((t) => (t.id === inflow.id ? inflow : t))
+              : [inflow, ...next];
           return next.sort(byDateDesc);
         });
-        toast.success("Repayment recorded", {
-          description: "Counted against what you were owed — not as income.",
+        toast.success(input.settle ? "Repayment recorded" : "Part-payment recorded", {
+          description: input.settle
+            ? "Counted against what you were owed — not as income."
+            : "The rest stays on the claim as still owed.",
         });
       })
       .catch(() => toast.error("Couldn't record the repayment. Please try again."))
@@ -1060,6 +1067,13 @@ export function TransactionsProvider({
 ]
   );
 
+  // What's still owed on each open claim (net of partial repayments).
+  const repaid = useMemo(() => repaymentsByClaim(items), [items]);
+  const remainingOf = useCallback(
+    (claim: Transaction) => claimRemaining(claim, repaid.get(claim.id) ?? [], fx),
+    [repaid, fx]
+  );
+
   return (
     <AppDataContext.Provider value={value}>
       {children}
@@ -1072,6 +1086,7 @@ export function TransactionsProvider({
         onRepayment={recordRepayment}
         onTransfer={recordTransfer}
         openClaims={items.filter((t) => t.reimbursement && !t.reimbursement.settled)}
+        remainingOf={remainingOf}
         editing={editingTransaction}
         presetEventId={addEventId}
         accounts={accounts}

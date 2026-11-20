@@ -95,6 +95,9 @@ export type TransactionRow = {
   not_income: boolean;
   // For a repayment inflow: the reimbursable transaction it settles.
   settles_id: string | null;
+  // For a cross-currency repayment: claim-currency units per 1 received unit
+  // (major units, e.g. 309 PKR per EUR). Optional on write (see 0025).
+  fx_rate?: number | null;
   // For an invoice-payment inflow: the invoice it pays (see 0016). Optional on
   // write (column defaults NULL); always present on read. Set only by
   // markInvoicePaid/recordInvoicePayment so paid invoices count as income.
@@ -540,6 +543,12 @@ export type RepaymentInput = {
   amount: number; // signed/positive minor units in `currency`
   currency: string;
   date: string;
+  /** Claim-currency units per 1 received unit; null when currencies match. */
+  fxRate: number | null;
+  /** Close the claim (true) or leave the rest still owed (false). */
+  settle: boolean;
+  /** Link an already-recorded inflow instead of posting a new one. */
+  existingId?: string;
 };
 
 /** Input for creating/editing an asset. */

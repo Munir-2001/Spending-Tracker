@@ -9,6 +9,7 @@ import { useAppData } from "@/components/transactions/transactions-provider";
 import { RefundDialog } from "@/components/reimbursements/refund-dialog";
 import type { Transaction } from "@/lib/data";
 import { pendingReceivablesBase } from "@/lib/compute";
+import { claimRemaining, repaymentsByClaim } from "@/lib/reimbursement";
 import { formatMoney, formatRelativeDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -24,6 +25,14 @@ export default function ReimbursementsPage() {
   const settled = claims.filter((c) => c.reimbursement!.settled);
 
   const owed = pendingReceivablesBase(items, fx);
+  const repaid = useMemo(() => repaymentsByClaim(items), [items]);
+  // Open claims show what's left; part-paid ones also show the original total.
+  const openAmount = (t: Transaction) => {
+    const total = t.reimbursement!.amount;
+    const left = claimRemaining(t, repaid.get(t.id) ?? [], fx);
+    const fmt = (m: number) => formatMoney(m, { currency: t.currency });
+    return left === total ? fmt(total) : `${fmt(left)} of ${fmt(total)}`;
+  };
 
   return (
     <div className="mx-auto max-w-3xl px-5 py-10 md:px-8 md:py-14">
@@ -82,9 +91,7 @@ export default function ReimbursementsPage() {
                     note={t.reimbursement!.note}
                     merchant={t.merchant}
                     date={t.date}
-                    amount={formatMoney(t.reimbursement!.amount, {
-                      currency: t.currency,
-                    })}
+                    amount={openAmount(t)}
                     accountName={getAccount(t.accountId)?.name}
                     action={
                       <Button

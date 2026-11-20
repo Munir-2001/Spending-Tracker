@@ -36,6 +36,11 @@ import { cn } from "@/lib/utils";
 import { isLotPriced } from "@/lib/asset-funding";
 import type { NewTransaction } from "@/components/transactions/transactions-provider";
 import { EventPicker, NO_EVENT } from "@/components/events/event-picker";
+import {
+  RepaymentTermsFields,
+  defaultReceived,
+  useRepaymentTerms,
+} from "@/components/reimbursements/repayment-terms";
 
 type Kind = "expense" | "income" | "transfer";
 type ItemRow = {
@@ -59,6 +64,7 @@ export function AddTransactionDialog({
   onRepayment,
   onTransfer,
   openClaims,
+  remainingOf,
   editing,
   presetEventId = null,
   accounts,
@@ -77,6 +83,8 @@ export function AddTransactionDialog({
   onRepayment: (input: RepaymentInput) => void;
   onTransfer: (input: TransferInput) => void;
   openClaims: Transaction[];
+  /** What's still owed on a claim (net of partial repayments), claim currency. */
+  remainingOf: (claim: Transaction) => number;
   editing: Transaction | null;
   /** For a new expense: the event it should start linked to. */
   presetEventId?: string | null;
@@ -240,6 +248,16 @@ export function AddTransactionDialog({
   const useItems = itemized && kind === "expense";
   const useReimb = reimbOn && kind === "expense" && !useItems;
   const useRepay = repayOn && kind === "income" && !isEditing;
+  const repayClaim = openClaims.find((c) => c.id === repayClaimId) ?? null;
+  const repayRemaining = repayClaim ? remainingOf(repayClaim) : 0;
+  const repayTerms = useRepaymentTerms({
+    claim: useRepay ? repayClaim : null,
+    remaining: repayRemaining,
+    currency,
+    amount,
+    setAmount,
+    fx,
+  });
   // Transfer source: any account or asset.
   const fromOptions = useMemo(
     () => [
@@ -368,15 +386,16 @@ export function AddTransactionDialog({
       if (!repayClaimId)
         return toast.error("Choose which expense this repays.");
       if (!accountId) return toast.error("Choose an account.");
-      const major = Number.parseFloat(amount);
-      if (!Number.isFinite(major) || major <= 0)
-        return toast.error("Enter the amount received.");
+      const res = repayTerms.toInput();
+      if (!res.ok) return toast.error(res.error);
       onRepayment({
         claimId: repayClaimId,
         accountId,
-        amount: toMinorUnits(major, currency),
+        amount: res.amount,
         currency,
         date,
+        fxRate: res.fxRate,
+        settle: res.settle,
       });
       reset();
       onOpenChange(false);
@@ -617,9 +636,7 @@ export function AddTransactionDialog({
                     const c = openClaims[0];
                     setRepayClaimId(c.id);
                     setCurrency(c.currency);
-                    setAmount(
-                      String(Math.abs(toMajorUnits(c.reimbursement!.amount, c.currency)))
-                    );
+                    setAmount(defaultReceived(remainingOf(c), c.currency, c.currency, fx));
                   }
                 }}
                 className={cn(
@@ -666,9 +683,7 @@ export function AddTransactionDialog({
                       const c = openClaims.find((x) => x.id === v);
                       if (c) {
                         setCurrency(c.currency);
-                        setAmount(
-                          String(Math.abs(toMajorUnits(c.reimbursement!.amount, c.currency)))
-                        );
+                        setAmount(defaultReceived(remainingOf(c), c.currency, c.currency, fx));
                       }
                     }}
                   >
@@ -679,8 +694,7 @@ export function AddTransactionDialog({
                       {openClaims.map((c) => (
                         <SelectItem key={c.id} value={c.id}>
                           {c.reimbursement!.person} · {c.merchant} ·{" "}
-                          {currencyInfo(c.currency).symbol}
-                          {toMajorUnits(c.reimbursement!.amount, c.currency)}
+                          {formatMoney(remainingOf(c), { currency: c.currency })}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -752,6 +766,10 @@ export function AddTransactionDialog({
                         setAccountId(v);
                         const acc = accountsById.get(v);
                         if (acc) setCurrency(acc.currency);
+                        if (acc && useRepay && repayClaim)
+                          setAmount(
+                            defaultReceived(repayRemaining, repayClaim.currency, acc.currency, fx)
+                          );
                       }}
                     >
                       <SelectTrigger className="w-full">
@@ -829,7 +847,11 @@ export function AddTransactionDialog({
                       step="any"
                       min="0"
                       value={amount}
-                      onChange={(e) => setAmount(e.target.value)}
+                      onChange={(e) =>
+                        useRepay
+                          ? repayTerms.onAmountChange(e.target.value)
+                          : setAmount(e.target.value)
+                      }
                       placeholder="0"
                       className="num pl-7"
                     />
@@ -837,6 +859,8 @@ export function AddTransactionDialog({
                 </div>
               )}
             </div>
+
+            {useRepay && repayClaim && <RepaymentTermsFields terms={repayTerms} />}
 
             {/* Don't-count-as-income toggle (income only, not a repayment) */}
             {kind === "income" && !useRepay && (

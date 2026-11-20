@@ -1018,8 +1018,12 @@ export async function settleReimbursement(
 }
 
 /**
- * Record an incoming repayment the user actually received, choosing which
- * reimbursable expense it settles. The inflow is flagged so it is NOT income.
+ * Record an incoming repayment against a reimbursable expense. The inflow is
+ * flagged so it is NOT income. Supports:
+ *  - cross-currency repayments (`fxRate` = claim units per 1 received unit),
+ *  - partial repayments (`settle: false` leaves the rest still owed),
+ *  - linking an inflow the user already recorded (`existingId`) instead of
+ *    posting a second one, so the money is never counted twice.
  */
 export async function recordRepayment(
   raw: RepaymentInput
@@ -1027,14 +1031,41 @@ export async function recordRepayment(
   const input = v.repaymentInput.parse(raw) as RepaymentInput;
   const userId = await getUserId();
   const claim = await db.findById("transactions", input.claimId);
+  if (!claim || claim.user_id !== userId || !claim.reimburse_amount)
+    throw new Error("Reimbursement not found.");
   const now = new Date().toISOString();
+  // Only write fx_rate when there is one, so same-currency repayments keep
+  // working even before migration 0025 is applied.
+  const ratePatch = input.fxRate != null ? { fx_rate: input.fxRate } : {};
+  const notes = enc(`Refund for: ${dec(claim.description)}`);
 
-  const updated = await updateOwned("transactions", input.claimId, {
-    reimburse_settled: true,
-    reimburse_settled_at: now,
-  });
+  const inflow = input.existingId
+    ? await linkExistingRepayment(input.existingId, input.claimId, userId, ratePatch, notes, now)
+    : await insertRepayment(input, claim, userId, ratePatch, notes, now);
 
-  const person = dec(claim?.reimburse_person);
+  const updated = input.settle
+    ? await updateOwned("transactions", input.claimId, {
+        reimburse_settled: true,
+        reimburse_settled_at: now,
+      })
+    : null;
+
+  revalidateTxnViews();
+  return {
+    updated: updated ? transactionToUi(updated) : null,
+    inflow: transactionToUi(inflow),
+  };
+}
+
+async function insertRepayment(
+  input: RepaymentInput,
+  claim: TransactionRow,
+  userId: string,
+  ratePatch: { fx_rate?: number },
+  notes: string | null,
+  now: string
+): Promise<TransactionRow> {
+  const person = dec(claim.reimburse_person);
   const inflow: TransactionRow = {
     id: randomUUID(),
     user_id: userId,
@@ -1048,20 +1079,46 @@ export async function recordRepayment(
     status: "posted",
     source: "manual",
     external_id: null,
-    notes: claim ? enc(`Refund for: ${dec(claim.description)}`) : null,
+    notes,
     ...noReimburse,
     is_reimbursement: true,
     settles_id: input.claimId,
+    ...ratePatch,
     created_at: now,
     updated_at: now,
   };
   await db.insert("transactions", inflow);
+  return inflow;
+}
 
-  revalidateTxnViews();
-  return {
-    updated: updated ? transactionToUi(updated) : null,
-    inflow: transactionToUi(inflow),
-  };
+/** Turn an inflow the user already recorded into the repayment for a claim. */
+async function linkExistingRepayment(
+  existingId: string,
+  claimId: string,
+  userId: string,
+  ratePatch: { fx_rate?: number },
+  notes: string | null,
+  now: string
+): Promise<TransactionRow> {
+  const existing = await db.findById("transactions", existingId);
+  if (
+    !existing ||
+    existing.user_id !== userId ||
+    existing.amount <= 0 ||
+    existing.is_transfer ||
+    existing.invoice_id ||
+    (existing.settles_id && existing.settles_id !== claimId)
+  )
+    throw new Error("That payment can't be linked to this reimbursement.");
+  const linked = await updateOwned("transactions", existingId, {
+    is_reimbursement: true,
+    settles_id: claimId,
+    ...ratePatch,
+    notes: existing.notes ?? notes,
+    updated_at: now,
+  });
+  if (!linked) throw new Error("Couldn't link that payment.");
+  return linked;
 }
 
 /**

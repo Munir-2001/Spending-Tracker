@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils";
 import { isLotPriced } from "@/lib/asset-funding";
 import type { NewTransaction } from "@/components/transactions/transactions-provider";
 import { EventPicker, NO_EVENT } from "@/components/events/event-picker";
+import { exchangeQuote, marketGap } from "@/lib/exchange";
 import {
   RepaymentTermsFields,
   defaultReceived,
@@ -149,6 +150,9 @@ export function AddTransactionDialog({
   const [eventId, setEventId] = useState(NO_EVENT);
   // Transfer destination, encoded as "acc:<id>" or "ast:<id>".
   const [toTarget, setToTarget] = useState("");
+  // Currency exchange: record what actually arrived instead of market conversion.
+  const [exchangeOn, setExchangeOn] = useState(false);
+  const [received, setReceived] = useState("");
   // Transfer source, encoded as "acc:<id>" or "ast:<id>" (accounts or assets).
   const [fromTarget, setFromTarget] = useState("");
 
@@ -283,6 +287,23 @@ export function AddTransactionDialog({
     fromKind === "asset"
       ? assets.find((a) => a.id === fromId)?.currency
       : accountsById.get(fromId)?.currency;
+  // Parsed destination (transfer mode) + its currency.
+  const [toTk, toTargetId] = toTarget.includes(":") ? toTarget.split(":") : ["", ""];
+  const toCurrency =
+    toTk === "ast"
+      ? assets.find((a) => a.id === toTargetId)?.currency
+      : accountsById.get(toTargetId)?.currency;
+  // Live exchange preview: sent/received in minor units, rate, gap vs market.
+  const sentMinor = toMinorUnits(Number.parseFloat(amount) || 0, fromCurrency ?? currency);
+  const receivedMinor = toMinorUnits(Number.parseFloat(received) || 0, toCurrency ?? currency);
+  const quote =
+    exchangeOn && toCurrency
+      ? exchangeQuote(sentMinor, fromCurrency ?? currency, receivedMinor, toCurrency)
+      : null;
+  const gap =
+    quote && toCurrency
+      ? marketGap(sentMinor, fromCurrency ?? currency, receivedMinor, toCurrency, fx)
+      : 0;
   // Possible transfer destinations: everything except the chosen source.
   // Gold/crypto are valued from their purchase lots, so money can't be moved
   // into them here — it would be overwritten on the next price refresh. Those
@@ -340,6 +361,8 @@ export function AddTransactionDialog({
     setRepayOn(false);
     setRepayClaimId("");
     setToTarget("");
+    setExchangeOn(false);
+    setReceived("");
     setNotIncomeOn(false);
     setEventId(NO_EVENT);
   }
@@ -365,7 +388,13 @@ export function AddTransactionDialog({
           ? assets.find((a) => a.id === toId)?.currency ?? srcCur
           : accountsById.get(toId)?.currency ?? srcCur;
       const amountMinor = toMinorUnits(major, srcCur);
-      const toAmount = fx.convert(amountMinor, srcCur, destCurrency);
+      let toAmount = fx.convert(amountMinor, srcCur, destCurrency);
+      if (exchangeOn) {
+        const got = Number.parseFloat(received);
+        if (!Number.isFinite(got) || got <= 0)
+          return toast.error("Enter the amount that arrived.");
+        toAmount = toMinorUnits(got, destCurrency);
+      }
       onTransfer({
         fromKind: fromKind as "account" | "asset",
         fromId,
@@ -625,6 +654,40 @@ export function AddTransactionDialog({
               </div>
             )}
 
+            {/* Currency exchange (transfer only): enter what actually arrived */}
+            {transferMode && (
+              <button
+                type="button"
+                onClick={() => setExchangeOn((v) => !v)}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-lg border px-3 py-2 text-sm transition-colors",
+                  exchangeOn
+                    ? "border-primary/30 bg-primary/5"
+                    : "border-border/60 hover:bg-muted/50"
+                )}
+              >
+                <span className="font-medium">
+                  Currency exchange{" "}
+                  <span className="font-normal text-muted-foreground">
+                    (enter what arrived)
+                  </span>
+                </span>
+                <span
+                  className={cn(
+                    "flex h-5 w-9 items-center rounded-full p-0.5 transition-colors",
+                    exchangeOn ? "bg-primary" : "bg-muted-foreground/30"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "size-4 rounded-full bg-background transition-transform",
+                      exchangeOn && "translate-x-4"
+                    )}
+                  />
+                </span>
+              </button>
+            )}
+
             {/* Repayment option (income only) — settle a reimbursable expense */}
             {kind === "income" && !isEditing && (
               <button
@@ -835,7 +898,9 @@ export function AddTransactionDialog({
               </div>
               {!useItems && (
                 <div className="space-y-1.5">
-                  <Label htmlFor="amount">Amount ({currency})</Label>
+                  <Label htmlFor="amount">
+                    {transferMode && exchangeOn ? "Amount sent" : "Amount"} ({currency})
+                  </Label>
                   <div className="relative">
                     <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
                       {symbol}
@@ -861,6 +926,50 @@ export function AddTransactionDialog({
             </div>
 
             {useRepay && repayClaim && <RepaymentTermsFields terms={repayTerms} />}
+
+            {transferMode && exchangeOn && (
+              <div className="space-y-1.5">
+                <Label htmlFor="received">
+                  Amount received ({toCurrency ?? "choose destination"})
+                </Label>
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+                    {toCurrency ? currencyInfo(toCurrency).symbol : ""}
+                  </span>
+                  <Input
+                    id="received"
+                    type="number"
+                    inputMode="decimal"
+                    step="any"
+                    min="0"
+                    value={received}
+                    onChange={(e) => setReceived(e.target.value)}
+                    placeholder={
+                      toCurrency && sentMinor > 0
+                        ? String(
+                            toMajorUnits(
+                              fx.convert(sentMinor, fromCurrency ?? currency, toCurrency),
+                              toCurrency
+                            )
+                          )
+                        : "0"
+                    }
+                    className="num pl-7"
+                    disabled={!toCurrency}
+                  />
+                </div>
+                <p className="num text-[11px] text-muted-foreground">
+                  {quote
+                    ? `Rate: 1 ${quote.base} = ${Number(quote.rate.toPrecision(6))} ${quote.quote}`
+                    : "Rate appears once both amounts are in."}
+                  {gap !== 0 &&
+                    toCurrency &&
+                    ` · ${formatMoney(Math.abs(gap), { currency: toCurrency })} ${
+                      gap < 0 ? "less" : "more"
+                    } than at market`}
+                </p>
+              </div>
+            )}
 
             {/* Don't-count-as-income toggle (income only, not a repayment) */}
             {kind === "income" && !useRepay && (
